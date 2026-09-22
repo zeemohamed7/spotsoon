@@ -6,9 +6,11 @@ final class SignalStore {
     private(set) var signals: [ParkingSignal] = []
     private(set) var isLoading = false
     private(set) var isPublishing = false
+    private(set) var claimingSignalIDs: Set<UUID> = []
     var listError: String?
     var connectionError: String?
     var publishError: String?
+    private(set) var claimErrors: [UUID: String] = [:]
     let userID: UUID
     private let repository: any ParkingSignalRepository
     private var observationTask: Task<Void, Never>?
@@ -26,7 +28,7 @@ final class SignalStore {
         do {
             let fetched = try await repository.fetchActive(now: now)
             guard version == refreshVersion else { return }
-            signals = ParkingSignal.active(fetched, at: now)
+            signals = ParkingSignal.visible(fetched, at: now)
             listError = nil
         } catch {
             guard version == refreshVersion else { return }
@@ -92,5 +94,39 @@ final class SignalStore {
             publishError = "Could not publish signal: \(error.localizedDescription)"
             return false
         }
+    }
+
+    func claim(_ signal: ParkingSignal, now: Date = .now) async -> Bool {
+        guard signal.status == .active, signal.createdBy != userID else { return false }
+        guard claimingSignalIDs.insert(signal.id).inserted else { return false }
+        claimErrors[signal.id] = nil
+        defer { claimingSignalIDs.remove(signal.id) }
+
+        do {
+            let claimed = try await repository.claim(signalID: signal.id)
+            guard claimed.id == signal.id else {
+                throw ParkingSignalRepositoryError.invalidClaimResponse
+            }
+            if let index = signals.firstIndex(where: { $0.id == claimed.id }) {
+                signals[index] = claimed
+            } else {
+                signals.append(claimed)
+            }
+            signals = ParkingSignal.visible(signals, at: now)
+            return true
+        } catch {
+            if let repositoryError = error as? ParkingSignalRepositoryError,
+               repositoryError == .signalUnavailable {
+                claimErrors[signal.id] = "This signal was already claimed or is no longer available."
+            } else {
+                claimErrors[signal.id] = "Could not claim signal: \(error.localizedDescription)"
+            }
+            await refresh()
+            return false
+        }
+    }
+
+    func isClaiming(_ signalID: UUID) -> Bool {
+        claimingSignalIDs.contains(signalID)
     }
 }
