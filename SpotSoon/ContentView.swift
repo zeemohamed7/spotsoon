@@ -7,28 +7,46 @@ struct ContentView: View {
     @State private var locationStore: LocationStore?
     @State private var error: String?
     @State private var loading = false
+    @AppStorage("hasCompletedPhaseOneOnboarding") private var hasCompletedOnboarding = false
+    @State private var isPreviewingOnboarding = ProcessInfo.processInfo.arguments.contains("--show-onboarding")
+
+    private var shouldShowOnboarding: Bool {
+        !hasCompletedOnboarding || isPreviewingOnboarding
+    }
 
     var body: some View {
         Group {
             if let store, let vehicleStore, let zoneStore, let locationStore {
-                SignalListView(
-                    store: store,
-                    vehicleStore: vehicleStore,
-                    zoneStore: zoneStore,
-                    locationStore: locationStore
-                )
+                if shouldShowOnboarding {
+                    OnboardingFlowView(locationStore: locationStore) {
+                        hasCompletedOnboarding = true
+                        isPreviewingOnboarding = false
+                    }
+                } else {
+                    SignalListView(
+                        store: store,
+                        vehicleStore: vehicleStore,
+                        zoneStore: zoneStore,
+                        locationStore: locationStore
+                    )
+                }
             } else {
                 NavigationStack {
-                    VStack(spacing: 16) {
-                        if loading { ProgressView("Starting anonymous session…") }
+                    VStack(spacing: 22) {
+                        SpotSoonLogo()
+                        Text("SpotSoon")
+                            .font(.largeTitle.bold())
+                        if loading { ProgressView("Preparing your private session…") }
                         if let error {
                             Text(error).foregroundStyle(.red)
                             Button("Retry") { Task { await start() } }.disabled(loading)
                         }
-                    }.padding().navigationTitle("SpotSoon")
+                    }
+                    .padding()
                 }
             }
         }
+        .tint(Color.spotPurple)
         .task { if store == nil { await start() } }
     }
 

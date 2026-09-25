@@ -172,6 +172,11 @@ final class LocationStore {
         }
     }
 
+    func requestPermission() async {
+        authorizationState = await provider.requestWhenInUseAuthorization()
+        refreshAuthorizationState()
+    }
+
     func requestPermissionAndVerify(zone: ParkingZone) async {
         authorizationState = await provider.requestWhenInUseAuthorization()
         await verify(zone: zone)

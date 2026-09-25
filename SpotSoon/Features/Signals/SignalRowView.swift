@@ -14,16 +14,36 @@ struct SignalRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(signal.campus.title) · \(signal.zone)").font(.headline)
-            if signal.leavingAt > now {
-                Text("Leaving in \(Int(ceil(signal.leavingAt.timeIntervalSince(now) / 60))) min")
-            } else {
-                Text("Leaving time reached")
+            if signal.status == .active && signal.createdBy == store.userID {
+                ownerWaitingStatus
             }
-            Text("Status: \(signal.status.rawValue)")
-                .font(.caption).foregroundStyle(.secondary)
+
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("\(signal.campus.title) — \(signal.zone)")
+                        .font(.headline)
+                    if signal.leavingAt > now {
+                        Text("Leaving in \(Int(ceil(signal.leavingAt.timeIntervalSince(now) / 60)))m")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.spotPurple)
+                    } else {
+                        Text("Leaving now")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.spotPurple)
+                    }
+                }
+                Spacer()
+                Text(signal.status.rawValue.capitalized)
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .foregroundStyle(Color.spotPurpleDark)
+                    .background(Color.spotLavender, in: Capsule())
+            }
+
             Text(signal.userState(for: store.userID).message)
-                .font(.subheadline.weight(.medium))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
             if let details = store.handover(for: signal) {
                 if let pass = details.pass { HandoverPassCard(pass: pass) }
@@ -41,8 +61,11 @@ struct SignalRowView: View {
                 }
             }
 
-            actionButtons
-                .buttonStyle(.bordered)
+            HStack(spacing: 8) {
+                actionButtons
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.spotPurple)
 
             if store.isPerformingAction(on: signal.id) {
                 ProgressView("Updating handover…")
@@ -50,6 +73,12 @@ struct SignalRowView: View {
             if let error = store.actionErrors[signal.id] {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
+        }
+        .padding(14)
+        .background(.white.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
         }
         .disabled(store.isPerformingAction(on: signal.id))
         .confirmationDialog(
@@ -71,6 +100,55 @@ struct SignalRowView: View {
         } message: {
             Text(confirmationMessage)
         }
+    }
+
+    private var ownerWaitingStatus: some View {
+        VStack(spacing: 12) {
+            Label("BROADCASTING LIVE", systemImage: "circle.fill")
+                .font(.caption2.bold())
+                .foregroundStyle(.green)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.green.opacity(0.08), in: Capsule())
+
+            TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 2) / 2
+                ZStack {
+                    Circle()
+                        .stroke(Color.spotPurple.opacity(0.24 * (1 - phase)), lineWidth: 2)
+                        .frame(width: 110, height: 110)
+                        .scaleEffect(0.75 + phase * 0.45)
+                    Circle()
+                        .stroke(Color.spotPurple.opacity(0.28), lineWidth: 2)
+                        .frame(width: 82, height: 82)
+                    Image(systemName: "car.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.spotPurple)
+                        .frame(width: 54, height: 54)
+                        .background(Color.spotLavender, in: Circle())
+                }
+                .frame(height: 132)
+            }
+
+            Text("Signal Active — Waiting for Driver")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text(countdownText)
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Color.spotInk)
+            Text("Waiting for claimant…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+    }
+
+    private var countdownText: String {
+        let seconds = max(0, Int(signal.expiresAt.timeIntervalSince(now)))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
     @ViewBuilder private var actionButtons: some View {

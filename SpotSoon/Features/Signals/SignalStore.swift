@@ -5,6 +5,7 @@ import Observation
 final class SignalStore {
     private(set) var signals: [ParkingSignal] = []
     private(set) var handoverDetails: [UUID: HandoverDetails] = [:]
+    private(set) var localBayHints: [UUID: String] = [:]
     private(set) var isLoading = false
     private(set) var isPublishing = false
     private(set) var inFlightSignalIDs: Set<UUID> = []
@@ -93,6 +94,7 @@ final class SignalStore {
         minutes: Int,
         ownerVehicleID: UUID?,
         location: LocationReading,
+        bayHint: String? = nil,
         now: Date = .now
     ) async -> Bool {
         guard !isPublishing else { return false }
@@ -104,7 +106,7 @@ final class SignalStore {
             publishError = "Select the vehicle you’re leaving in."
             return false
         }
-        guard zone.isActive, zone.isSupported, [2, 5, 10].contains(minutes) else {
+        guard zone.isActive, zone.isSupported, [0, 2, 5, 10].contains(minutes) else {
             publishError = "Choose a valid active parking zone and leaving time."
             return false
         }
@@ -121,6 +123,10 @@ final class SignalStore {
                 location: location
             ))
             guard published.createdBy == userID else { throw ParkingSignalRepositoryError.invalidSignalResponse }
+            let trimmedHint = bayHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmedHint, !trimmedHint.isEmpty {
+                localBayHints[published.id] = String(trimmedHint.prefix(100))
+            }
             apply(published, now: now)
             await refresh()
             return true
@@ -189,6 +195,7 @@ final class SignalStore {
             apply(updated, now: now)
             if updated.status.isTerminal {
                 handoverDetails[signal.id] = nil
+                localBayHints[signal.id] = nil
             }
             await refresh(now: now)
             return true
@@ -206,6 +213,10 @@ final class SignalStore {
     func handover(for signal: ParkingSignal) -> HandoverDetails? {
         guard signal.createdBy == userID || signal.claimedBy == userID else { return nil }
         return handoverDetails[signal.id]
+    }
+
+    func localBayHint(for signalID: UUID) -> String? {
+        localBayHints[signalID]
     }
 
     func clearActionError(for signalID: UUID) {

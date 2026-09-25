@@ -9,8 +9,10 @@ struct CreateSignalView: View {
     let locationStore: LocationStore
     let zoneStore: ParkingZoneStore
 
-    @State private var minutes = 5
+    @State private var minutes = 2
     @State private var selectedVehicleID: UUID?
+    @State private var bayHint = ""
+    @State private var didPublish = false
     @State private var showingLocationExplanation = false
     @State private var selectedZoneID: String
 
@@ -30,6 +32,7 @@ struct CreateSignalView: View {
 
     private var zone: ParkingZone? {
         zoneStore.zones.first { $0.id == selectedZoneID && $0.isActive }
+            ?? ParkingZone.supportedDefaults.first { $0.id == selectedZoneID }
     }
 
     private var suggestedZone: ParkingZone? {
@@ -50,63 +53,68 @@ struct CreateSignalView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Parking area") {
-                    Picker("Zone", selection: Binding(
-                        get: { selectedZoneID },
-                        set: { switchZone(to: $0) }
-                    )) {
-                        ForEach(zoneStore.zones) { option in
-                            Text(option.selectionLabel).tag(option.id)
-                        }
-                    }
-                    if let zone {
-                        LabeledContent("Selected", value: zone.name)
-                        if let context = zone.alternativeContext {
-                            LabeledContent("Context", value: context)
-                        }
-                        LabeledContent("Landmark", value: zone.landmark)
-                    }
-                    Text("The map circle represents the permitted student parking area, not an individual parking bay.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-
-                Picker("Leaving in", selection: $minutes) {
-                    ForEach([2, 5, 10], id: \.self) { Text("\($0) minutes").tag($0) }
-                }
-
-                VehiclePickerView(
-                    title: "Vehicle you’re leaving in",
-                    store: vehicleStore,
-                    selectedVehicleID: $selectedVehicleID
-                )
-
-                locationSection
-
-                Section {
-                    Button("Publish") { publish() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 25) {
+                    Capsule()
+                        .fill(.secondary.opacity(0.28))
+                        .frame(width: 44, height: 5)
                         .frame(maxWidth: .infinity)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canPublish)
+
+                    header
+                    departurePicker
+
+                    VehiclePickerView(
+                        title: "Vehicle you’re leaving in",
+                        store: vehicleStore,
+                        selectedVehicleID: $selectedVehicleID
+                    )
+
+                    Text("Only revealed to the claimant during the active handover.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, -16)
+
+                    bayHintField
+                    locationStatus
+
+                    if let error = store.publishError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                    if store.hasOpenSignalOwnedByCurrentUser && !store.isPublishing && !didPublish {
+                        Text("Finish or cancel your current signal before publishing another.")
+                            .font(.caption).foregroundStyle(.red)
+                    }
+
+                    HStack {
+                        Spacer()
+                        Label(
+                            "Expires in \(minutes == 0 ? 5 : minutes + 5) min if unclaimed",
+                            systemImage: "clock"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+
+                    Button {
+                        publish()
+                    } label: {
+                        if store.isPublishing {
+                            ProgressView().tint(.white)
+                        } else {
+                            Label("Publish Signal", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                    }
+                    .buttonStyle(SpotSoonPrimaryButtonStyle())
+                    .disabled(!canPublish)
                 }
-                if let error = store.publishError { Text(error).foregroundStyle(.red) }
-                if store.isPublishing { ProgressView("Publishing…") }
-                if store.hasOpenSignalOwnedByCurrentUser {
-                    Text("Finish or cancel your current parking signal before publishing another.")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
+                .padding(.horizontal, 24)
+                .padding(.top, 10)
+                .padding(.bottom, 26)
             }
+            .background(.white)
+            .toolbar(.hidden, for: .navigationBar)
             .disabled(store.isPublishing)
-            .navigationTitle("Leaving signal")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(store.isPublishing)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Publish") { publish() }.disabled(!canPublish)
-                }
-            }
             .interactiveDismissDisabled(store.isPublishing)
             .sheet(isPresented: $showingLocationExplanation) {
                 LocationPermissionExplanationView {
@@ -133,82 +141,150 @@ struct CreateSignalView: View {
         }
     }
 
-    @ViewBuilder private var locationSection: some View {
-        Section("Location verification") {
-            switch locationStore.verificationState {
-            case .notRequested:
-                Label("Location permission has not been requested", systemImage: "location.slash")
-            case .permissionDenied:
-                Label("Location access denied", systemImage: "location.slash.fill")
-                    .foregroundStyle(.red)
-                Button("Open Settings") { locationStore.openSettings() }
-            case .restricted:
-                Label("Location access restricted", systemImage: "lock.fill")
-                    .foregroundStyle(.red)
-            case .locating:
-                ProgressView("Getting a fresh GPS reading…")
-            case let .inaccurate(accuracy):
-                Label("GPS reading is too inaccurate", systemImage: "scope")
-                    .foregroundStyle(.orange)
-                Text("Current accuracy: ±\(Int(accuracy.rounded())) m. Required: 65 m or better.")
-            case let .outsideZone(distance, accuracy):
-                Label("Outside parking zone", systemImage: "mappin.slash")
-                    .foregroundStyle(.orange)
-                Text("Approximately \(Int(distance.rounded())) m from the zone centre · accuracy ±\(Int(accuracy.rounded())) m")
-                if let suggestedZone {
-                    Text("You appear to be near \(suggestedZone.name)")
-                        .font(.subheadline.weight(.medium))
-                    Button("Switch to \(suggestedZone.campus.title)") {
-                        switchZone(to: suggestedZone.id)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Publish Signal")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.spotInk)
+                Spacer()
+                Button("Close", systemImage: "xmark") { dismiss() }
+                    .labelStyle(.iconOnly)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42, height: 42)
+                    .background(Color(.secondarySystemGroupedBackground), in: Circle())
+            }
+
+            if let zone {
+                Menu {
+                    ForEach(zoneStore.zones.isEmpty ? ParkingZone.supportedDefaults : zoneStore.zones) { option in
+                        Button(option.selectionLabel) { switchZone(to: option.id) }
+                    }
+                } label: {
+                    HStack(spacing: 7) {
+                        Text("\(zone.campus.title) — \(zone.name)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.spotInk)
+                        Text("·")
+                        Label(verificationLabel, systemImage: "circle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(locationStore.isVerified(for: zone.id) ? .green : .orange)
                     }
                 }
-            case let .verified(result):
-                Label("Verified at \(zone?.name ?? "selected parking area")", systemImage: "checkmark.location.fill")
-                    .foregroundStyle(.green)
-                if let distance = result.distanceMeters {
-                    Text("Approximately \(Int(distance.rounded())) m from centre · accuracy ±\(Int(result.horizontalAccuracy.rounded())) m")
-                        .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var verificationLabel: String {
+        guard let zone else { return "Not verified" }
+        return locationStore.isVerified(for: zone.id) ? "Verified in zone" : "Verification needed"
+    }
+
+    private var departurePicker: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("DEPARTING IN")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            HStack(spacing: 9) {
+                ForEach([0, 2, 5, 10], id: \.self) { option in
+                    Button(option == 0 ? "Now" : "\(option) min") { minutes = option }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(minutes == option ? .white : Color.spotInk)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(
+                            minutes == option ? Color.spotPurple : Color(.secondarySystemGroupedBackground),
+                            in: Capsule()
+                        )
                 }
-            case .unavailable:
-                Label("Location unavailable", systemImage: "location.slash")
+            }
+        }
+    }
+
+    private var bayHintField: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("BAY OR LANDMARK HINT (OPTIONAL)")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            TextField("e.g. Row 3, near shade canopy", text: $bayHint, axis: .vertical)
+                .lineLimit(2...3)
+                .padding(15)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                }
+                .onChange(of: bayHint) { _, value in
+                    if value.count > 100 { bayHint = String(value.prefix(100)) }
+                }
+            Text("Private hint storage will be connected in a later data phase.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var locationStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch locationStore.verificationState {
+            case .notRequested:
+                Label("Location verification required", systemImage: "location")
+            case .permissionDenied:
+                Label("Location access denied", systemImage: "location.slash.fill").foregroundStyle(.red)
+                Button("Open Settings") { locationStore.openSettings() }
+            case .restricted:
+                Label("Location access restricted", systemImage: "lock.fill").foregroundStyle(.red)
+            case .locating:
+                ProgressView("Verifying parking area…")
+            case let .inaccurate(accuracy):
+                Label("GPS accuracy ±\(Int(accuracy.rounded())) m is too low", systemImage: "scope")
                     .foregroundStyle(.orange)
+            case let .outsideZone(distance, _):
+                Label("Outside selected zone · \(Int(distance.rounded())) m away", systemImage: "mappin.slash")
+                    .foregroundStyle(.orange)
+                if let suggestedZone {
+                    Button("Switch to \(suggestedZone.campus.title)") { switchZone(to: suggestedZone.id) }
+                }
+            case .verified:
+                Label("Campus location verified", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .unavailable:
+                Label("Location unavailable", systemImage: "location.slash").foregroundStyle(.orange)
             case let .error(message):
                 Text(message).foregroundStyle(.red)
             }
 
             if locationStore.authorizationState == .notRequested {
-                Button("Allow Location") {
-                    if hasShownLocationExplanation {
-                        verifyAfterPermission()
-                    } else {
-                        showingLocationExplanation = true
-                    }
+                Button("Enable Campus Location") {
+                    if hasShownLocationExplanation { verifyAfterPermission() }
+                    else { showingLocationExplanation = true }
                 }
             } else if locationStore.authorizationState == .authorized {
-                Button("Retry Location", systemImage: "location.magnifyingglass") {
-                    verifySelectedZone()
-                }
-                .disabled(locationStore.verificationState == .locating)
+                Button("Retry Verification", systemImage: "location.magnifyingglass") { verifySelectedZone() }
+                    .disabled(locationStore.verificationState == .locating)
             }
         }
+        .font(.subheadline)
     }
 
     private func publish() {
         guard canPublish, let zone else { return }
         Task {
-            // A fresh reading immediately before the RPC limits stale submissions.
             await locationStore.verify(zone: zone, availableZones: zoneStore.zones)
-            guard locationStore.isVerified(for: zone.id),
-                  let reading = locationStore.latestReading else { return }
+            guard locationStore.isVerified(for: zone.id), let reading = locationStore.latestReading else { return }
             let succeeded = await store.publish(
                 zone: zone,
                 minutes: minutes,
                 ownerVehicleID: selectedVehicleID,
-                location: reading
+                location: reading,
+                bayHint: bayHint
             )
             if succeeded {
+                didPublish = true
                 dismiss()
-            } else if store.publishRequiresLocationRefresh {
+            }
+            else if store.publishRequiresLocationRefresh {
                 await locationStore.verify(zone: zone, availableZones: zoneStore.zones)
             }
         }
@@ -216,19 +292,13 @@ struct CreateSignalView: View {
 
     private func switchZone(to id: String) {
         guard id != selectedZoneID,
-              let newZone = zoneStore.zones.first(where: { $0.id == id && $0.isActive }) else {
-            return
-        }
+              let newZone = (zoneStore.zones.isEmpty ? ParkingZone.supportedDefaults : zoneStore.zones)
+                .first(where: { $0.id == id && $0.isActive }) else { return }
         selectedZoneID = id
         _ = zoneStore.selectZone(id: id)
         locationStore.invalidateVerification()
         if locationStore.authorizationState == .authorized {
-            Task {
-                await locationStore.switchAndVerify(
-                    to: newZone,
-                    availableZones: zoneStore.zones
-                )
-            }
+            Task { await locationStore.switchAndVerify(to: newZone, availableZones: zoneStore.zones) }
         }
     }
 
@@ -240,10 +310,7 @@ struct CreateSignalView: View {
     private func verifyAfterPermission() {
         guard let zone else { return }
         Task {
-            await locationStore.requestPermissionAndVerify(
-                zone: zone,
-                availableZones: zoneStore.zones
-            )
+            await locationStore.requestPermissionAndVerify(zone: zone, availableZones: zoneStore.zones)
         }
     }
 }
@@ -256,7 +323,7 @@ nonisolated enum PublishSignalEligibility {
         isPublishing: Bool
     ) -> Bool {
         vehicleID != nil
-            && [2, 5, 10].contains(minutes)
+            && [0, 2, 5, 10].contains(minutes)
             && locationState.isVerified
             && !isPublishing
     }

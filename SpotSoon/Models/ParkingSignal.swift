@@ -97,7 +97,7 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
     }
 
     static func leaving(userID: UUID, parkingZone: ParkingZone, minutes: Int, now: Date) -> Self {
-        let leavingAt = now.addingTimeInterval(TimeInterval(minutes * 60))
+        let leavingAt = now.addingTimeInterval(minutes == 0 ? 15 : TimeInterval(minutes * 60))
         return Self(id: UUID(), createdBy: userID, zoneID: parkingZone.id,
                     campus: parkingZone.campus, zone: parkingZone.name,
                     leavingAt: leavingAt, expiresAt: leavingAt.addingTimeInterval(300),
