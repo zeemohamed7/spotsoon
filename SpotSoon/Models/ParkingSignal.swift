@@ -109,6 +109,16 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
             .sorted { $0.leavingAt == $1.leavingAt ? $0.id.uuidString < $1.id.uuidString : $0.leavingAt < $1.leavingAt }
     }
 
+    static func visible(_ signals: [Self], in zone: ParkingZone?, at now: Date) -> [Self] {
+        guard let zone else { return [] }
+        return visible(signals, at: now).filter { $0.belongs(to: zone) }
+    }
+
+    func belongs(to parkingZone: ParkingZone) -> Bool {
+        if let zoneID { return zoneID == parkingZone.id }
+        return campus == parkingZone.campus
+    }
+
     func userState(for userID: UUID) -> UserState {
         switch status {
         case .active:

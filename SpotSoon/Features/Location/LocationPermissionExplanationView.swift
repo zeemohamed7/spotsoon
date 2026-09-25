@@ -12,7 +12,7 @@ struct LocationPermissionExplanationView: View {
                     .foregroundStyle(.blue)
                 Text("Verify the parking area")
                     .font(.title2.bold())
-                Text("SpotSoon uses your location to confirm that you are near Campus A Student Car Park before sharing a spot.")
+                Text("SpotSoon uses your location to confirm that you are near the selected student car park before sharing a spot.")
                     .multilineTextAlignment(.center)
                 Text("SpotSoon requests a fresh reading only when you publish. It does not continuously track you or store location history.")
                     .font(.subheadline)

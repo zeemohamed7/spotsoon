@@ -25,6 +25,7 @@ nonisolated struct PublishParkingSignalRequest: Equatable, Sendable {
 enum SignalEvent { case changed, connected, disconnected }
 
 enum ParkingSignalRepositoryError: LocalizedError, Equatable {
+    case activeSignalExists
     case signalUnavailable
     case transitionUnavailable
     case vehicleUnavailable
@@ -37,15 +38,16 @@ enum ParkingSignalRepositoryError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
+        case .activeSignalExists: "You already have an open parking signal. Finish or cancel it before publishing another."
         case .signalUnavailable: "This signal was already claimed or is no longer available."
         case .transitionUnavailable: "This action is no longer available. Refresh to see the latest signal."
         case .vehicleUnavailable: "Select a saved vehicle that belongs to this account."
         case .zoneUnavailable: "The selected parking zone is unavailable."
         case .locationUnavailable: "A valid current location is unavailable. Try again."
         case .locationInaccurate: "GPS accuracy must improve to 65 metres or better."
-        case .outsideParkingZone: "You must be inside Campus A Student Car Park to publish."
+        case .outsideParkingZone: "You must be inside the selected student parking area to publish."
         case .databaseSetupRequired:
-            "Supabase database update required. Run the pending ordered migrations through 202609250002_add_gps_verified_parking_zone.sql, then restart SpotSoon."
+            "Supabase database update required. Run the pending ordered migrations through 202609250004_enforce_one_open_signal_per_creator.sql, then restart SpotSoon."
         case .invalidSignalResponse: "The server returned an invalid parking signal."
         }
     }
@@ -149,6 +151,10 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
 
     nonisolated static func repositoryError(for diagnostic: String) -> ParkingSignalRepositoryError? {
         let diagnostic = diagnostic.lowercased()
+        if diagnostic.contains("active_signal_exists")
+            || diagnostic.contains("parking_signals_one_open_per_creator_idx") {
+            return .activeSignalExists
+        }
         if diagnostic.contains("signal_unavailable") {
             return .signalUnavailable
         }

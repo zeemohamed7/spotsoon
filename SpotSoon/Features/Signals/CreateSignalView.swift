@@ -7,27 +7,66 @@ struct CreateSignalView: View {
     let store: SignalStore
     let vehicleStore: VehicleStore
     let locationStore: LocationStore
-    let zone: ParkingZone
+    let zoneStore: ParkingZoneStore
 
     @State private var minutes = 5
     @State private var selectedVehicleID: UUID?
     @State private var showingLocationExplanation = false
+    @State private var selectedZoneID: String
+
+    init(
+        store: SignalStore,
+        vehicleStore: VehicleStore,
+        locationStore: LocationStore,
+        zoneStore: ParkingZoneStore,
+        initialZone: ParkingZone
+    ) {
+        self.store = store
+        self.vehicleStore = vehicleStore
+        self.locationStore = locationStore
+        self.zoneStore = zoneStore
+        _selectedZoneID = State(initialValue: initialZone.id)
+    }
+
+    private var zone: ParkingZone? {
+        zoneStore.zones.first { $0.id == selectedZoneID && $0.isActive }
+    }
+
+    private var suggestedZone: ParkingZone? {
+        guard let id = locationStore.suggestedZoneID else { return nil }
+        return zoneStore.zones.first { $0.id == id }
+    }
 
     private var canPublish: Bool {
-        PublishSignalEligibility.canPublish(
+        guard let zone else { return false }
+        return PublishSignalEligibility.canPublish(
             vehicleID: selectedVehicleID,
             minutes: minutes,
             locationState: locationStore.verificationState,
             isPublishing: store.isPublishing
-        )
+        ) && locationStore.isVerified(for: zone.id)
+            && !store.hasOpenSignalOwnedByCurrentUser
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Parking area") {
-                    LabeledContent("Zone", value: zone.name)
-                    LabeledContent("Landmark", value: zone.landmark)
+                    Picker("Zone", selection: Binding(
+                        get: { selectedZoneID },
+                        set: { switchZone(to: $0) }
+                    )) {
+                        ForEach(zoneStore.zones) { option in
+                            Text(option.selectionLabel).tag(option.id)
+                        }
+                    }
+                    if let zone {
+                        LabeledContent("Selected", value: zone.name)
+                        if let context = zone.alternativeContext {
+                            LabeledContent("Context", value: context)
+                        }
+                        LabeledContent("Landmark", value: zone.landmark)
+                    }
                     Text("The map circle represents the permitted student parking area, not an individual parking bay.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -52,6 +91,11 @@ struct CreateSignalView: View {
                 }
                 if let error = store.publishError { Text(error).foregroundStyle(.red) }
                 if store.isPublishing { ProgressView("Publishing…") }
+                if store.hasOpenSignalOwnedByCurrentUser {
+                    Text("Finish or cancel your current parking signal before publishing another.")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
             .disabled(store.isPublishing)
             .navigationTitle("Leaving signal")
@@ -68,7 +112,7 @@ struct CreateSignalView: View {
                 LocationPermissionExplanationView {
                     hasShownLocationExplanation = true
                     showingLocationExplanation = false
-                    Task { await locationStore.requestPermissionAndVerify(zone: zone) }
+                    verifyAfterPermission()
                 } notNow: {
                     hasShownLocationExplanation = true
                     showingLocationExplanation = false
@@ -76,9 +120,10 @@ struct CreateSignalView: View {
                 .presentationDetents([.medium])
             }
             .task {
+                guard let zone else { return }
                 switch locationStore.authorizationState {
                 case .authorized:
-                    await locationStore.verify(zone: zone)
+                    await locationStore.verify(zone: zone, availableZones: zoneStore.zones)
                 case .notRequested where !hasShownLocationExplanation:
                     showingLocationExplanation = true
                 case .notRequested, .denied, .restricted:
@@ -110,8 +155,15 @@ struct CreateSignalView: View {
                 Label("Outside parking zone", systemImage: "mappin.slash")
                     .foregroundStyle(.orange)
                 Text("Approximately \(Int(distance.rounded())) m from the zone centre · accuracy ±\(Int(accuracy.rounded())) m")
+                if let suggestedZone {
+                    Text("You appear to be near \(suggestedZone.name)")
+                        .font(.subheadline.weight(.medium))
+                    Button("Switch to \(suggestedZone.campus.title)") {
+                        switchZone(to: suggestedZone.id)
+                    }
+                }
             case let .verified(result):
-                Label("Verified at Campus A Student Car Park", systemImage: "checkmark.location.fill")
+                Label("Verified at \(zone?.name ?? "selected parking area")", systemImage: "checkmark.location.fill")
                     .foregroundStyle(.green)
                 if let distance = result.distanceMeters {
                     Text("Approximately \(Int(distance.rounded())) m from centre · accuracy ±\(Int(result.horizontalAccuracy.rounded())) m")
@@ -127,14 +179,14 @@ struct CreateSignalView: View {
             if locationStore.authorizationState == .notRequested {
                 Button("Allow Location") {
                     if hasShownLocationExplanation {
-                        Task { await locationStore.requestPermissionAndVerify(zone: zone) }
+                        verifyAfterPermission()
                     } else {
                         showingLocationExplanation = true
                     }
                 }
             } else if locationStore.authorizationState == .authorized {
                 Button("Retry Location", systemImage: "location.magnifyingglass") {
-                    Task { await locationStore.verify(zone: zone) }
+                    verifySelectedZone()
                 }
                 .disabled(locationStore.verificationState == .locating)
             }
@@ -142,11 +194,11 @@ struct CreateSignalView: View {
     }
 
     private func publish() {
-        guard canPublish else { return }
+        guard canPublish, let zone else { return }
         Task {
             // A fresh reading immediately before the RPC limits stale submissions.
-            await locationStore.verify(zone: zone)
-            guard locationStore.verificationState.isVerified,
+            await locationStore.verify(zone: zone, availableZones: zoneStore.zones)
+            guard locationStore.isVerified(for: zone.id),
                   let reading = locationStore.latestReading else { return }
             let succeeded = await store.publish(
                 zone: zone,
@@ -157,8 +209,41 @@ struct CreateSignalView: View {
             if succeeded {
                 dismiss()
             } else if store.publishRequiresLocationRefresh {
-                await locationStore.verify(zone: zone)
+                await locationStore.verify(zone: zone, availableZones: zoneStore.zones)
             }
+        }
+    }
+
+    private func switchZone(to id: String) {
+        guard id != selectedZoneID,
+              let newZone = zoneStore.zones.first(where: { $0.id == id && $0.isActive }) else {
+            return
+        }
+        selectedZoneID = id
+        _ = zoneStore.selectZone(id: id)
+        locationStore.invalidateVerification()
+        if locationStore.authorizationState == .authorized {
+            Task {
+                await locationStore.switchAndVerify(
+                    to: newZone,
+                    availableZones: zoneStore.zones
+                )
+            }
+        }
+    }
+
+    private func verifySelectedZone() {
+        guard let zone else { return }
+        Task { await locationStore.verify(zone: zone, availableZones: zoneStore.zones) }
+    }
+
+    private func verifyAfterPermission() {
+        guard let zone else { return }
+        Task {
+            await locationStore.requestPermissionAndVerify(
+                zone: zone,
+                availableZones: zoneStore.zones
+            )
         }
     }
 }

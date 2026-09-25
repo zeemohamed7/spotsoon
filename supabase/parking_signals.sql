@@ -25,9 +25,14 @@ create table public.parking_zones (
 insert into public.parking_zones (
     id, name, campus, landmark, latitude, longitude,
     verification_radius_meters, is_active
-) values (
+) values
+(
     'campus_a_student', 'Campus A Student Car Park', 'campus_a',
     'West of the stadium', 26.164736, 50.543676, 140, true
+),
+(
+    'campus_b_student', 'Campus B Student Car Park', 'campus_b',
+    'Beside Building 20', 26.158319, 50.546641, 90, true
 );
 
 -- Public feed --------------------------------------------------------------
@@ -76,6 +81,9 @@ create index parking_signals_visible_leaving_idx
     on public.parking_signals (leaving_at)
     where status in ('active', 'claimed', 'arrived', 'vacated');
 create index parking_signals_created_by_idx on public.parking_signals (created_by);
+create unique index parking_signals_one_open_per_creator_idx
+    on public.parking_signals (created_by)
+    where status in ('active', 'claimed', 'arrived', 'vacated');
 create index parking_signals_zone_visible_idx
     on public.parking_signals (zone_id, leaving_at)
     where status in ('active', 'claimed', 'arrived', 'vacated');
@@ -355,6 +363,23 @@ declare
 begin
     if v_user_id is null then
         raise exception using errcode = '42501', message = 'authentication_required';
+    end if;
+    update public.parking_signals
+    set status = 'expired', claimed_by = null, claimed_at = null
+    where created_by = v_user_id
+      and status in ('active', 'claimed', 'arrived', 'vacated')
+      and expires_at <= now();
+    delete from public.parking_signal_handovers as handover
+    using public.parking_signals as signal
+    where handover.signal_id = signal.id
+      and signal.created_by = v_user_id
+      and signal.status = 'expired';
+    if exists (
+        select 1 from public.parking_signals
+        where created_by = v_user_id
+          and status in ('active', 'claimed', 'arrived', 'vacated')
+    ) then
+        raise exception using errcode = 'P0001', message = 'active_signal_exists';
     end if;
     select * into v_zone from public.parking_zones
     where id = p_zone_id and is_active;

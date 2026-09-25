@@ -42,6 +42,7 @@ struct SignalRowView: View {
             }
 
             actionButtons
+                .buttonStyle(.bordered)
 
             if store.isPerformingAction(on: signal.id) {
                 ProgressView("Updating handover…")

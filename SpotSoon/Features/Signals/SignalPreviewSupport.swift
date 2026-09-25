@@ -28,7 +28,12 @@ private final class PreviewParkingSignalRepository: ParkingSignalRepository {
 
 @MainActor
 private final class PreviewZoneRepository: ParkingZoneRepository {
-    func fetchActiveZones() async throws -> [ParkingZone] { [.campusAStudent] }
+    func fetchActiveZones() async throws -> [ParkingZone] { ParkingZone.supportedDefaults }
+}
+
+@MainActor
+private final class PreviewZoneSelection: ParkingZoneSelectionPersisting {
+    var selectedZoneID: String? = ParkingZone.campusAStudent.id
 }
 
 @MainActor
@@ -71,8 +76,9 @@ private struct SignalLifecyclePreview: View {
         let signal = ParkingSignal(
             id: signalID,
             createdBy: owner,
+            zoneID: ParkingZone.campusAStudent.id,
             campus: .campusA,
-            zone: "A2",
+            zone: ParkingZone.campusAStudent.name,
             leavingAt: now.addingTimeInterval(300),
             expiresAt: now.addingTimeInterval(600),
             status: .arrived,
@@ -108,7 +114,10 @@ private struct SignalLifecyclePreview: View {
             userID: owner
         )
         vehicleStore = VehicleStore(repository: PreviewVehicleRepository(vehicle: vehicle), userID: owner)
-        zoneStore = ParkingZoneStore(repository: PreviewZoneRepository())
+        zoneStore = ParkingZoneStore(
+            repository: PreviewZoneRepository(),
+            selectionPersistence: PreviewZoneSelection()
+        )
         locationStore = LocationStore(provider: PreviewLocationProvider())
     }
 

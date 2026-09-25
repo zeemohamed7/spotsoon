@@ -145,6 +145,8 @@ final class LocationStore {
     private(set) var authorizationState: LocationAuthorizationState
     private(set) var verificationState: VerificationState
     private(set) var latestReading: LocationReading?
+    private(set) var suggestedZoneID: String?
+    private(set) var verificationZoneID: String?
 
     private let provider: any LocationProviding
     private let verifier: ZoneVerifier
@@ -175,8 +177,15 @@ final class LocationStore {
         await verify(zone: zone)
     }
 
-    func verify(zone: ParkingZone) async {
+    func requestPermissionAndVerify(zone: ParkingZone, availableZones: [ParkingZone]) async {
+        authorizationState = await provider.requestWhenInUseAuthorization()
+        await verify(zone: zone, availableZones: availableZones)
+    }
+
+    func verify(zone: ParkingZone, availableZones: [ParkingZone] = []) async {
         refreshAuthorizationState()
+        suggestedZoneID = nil
+        verificationZoneID = zone.id
         switch authorizationState {
         case .notRequested:
             verificationState = .notRequested
@@ -207,6 +216,11 @@ final class LocationStore {
                         distance: result.distanceMeters ?? 0,
                         accuracy: result.horizontalAccuracy
                     )
+                    suggestedZoneID = verifier.suggestedAlternative(
+                        to: zone,
+                        among: availableZones,
+                        reading: reading
+                    )?.id
                 case .invalidLocation, .staleLocation:
                     verificationState = .unavailable
                 case .inactiveZone, .unknownZone:
@@ -225,6 +239,26 @@ final class LocationStore {
         } catch {
             verificationState = .error(error.localizedDescription)
         }
+    }
+
+    func invalidateVerification() {
+        latestReading = nil
+        suggestedZoneID = nil
+        verificationZoneID = nil
+        switch authorizationState {
+        case .denied: verificationState = .permissionDenied
+        case .restricted: verificationState = .restricted
+        case .notRequested, .authorized: verificationState = .notRequested
+        }
+    }
+
+    func switchAndVerify(to zone: ParkingZone, availableZones: [ParkingZone]) async {
+        invalidateVerification()
+        await verify(zone: zone, availableZones: availableZones)
+    }
+
+    func isVerified(for zoneID: String) -> Bool {
+        verificationZoneID == zoneID && verificationState.isVerified
     }
 
     func openSettings() {

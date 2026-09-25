@@ -34,6 +34,85 @@ final class ParkingZoneTests: XCTestCase {
         XCTAssertTrue(zone.isSupported)
     }
 
+    func testCampusBZoneDecodesDatabaseColumns() throws {
+        let data = """
+        {
+          "id":"campus_b_student",
+          "name":"Campus B Student Car Park",
+          "campus":"campus_b",
+          "landmark":"Beside Building 20",
+          "latitude":26.158319,
+          "longitude":50.546641,
+          "verification_radius_meters":90,
+          "is_active":true,
+          "created_at":"2026-09-25T12:00:00Z",
+          "updated_at":"2026-09-25T12:00:00Z"
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let zone = try decoder.decode(ParkingZone.self, from: data)
+
+        XCTAssertEqual(zone, ParkingZone.campusBStudent.withDates(zone.createdAt, zone.updatedAt))
+        XCTAssertEqual(zone.alternativeContext, "formerly BTI")
+        XCTAssertTrue(zone.isSupported)
+    }
+
+    func testCommittedCampusAAndCampusBDefinitionsRemainExact() {
+        XCTAssertEqual(ParkingZone.campusAStudent.latitude, 26.164736)
+        XCTAssertEqual(ParkingZone.campusAStudent.longitude, 50.543676)
+        XCTAssertEqual(ParkingZone.campusAStudent.verificationRadiusMeters, 140)
+        XCTAssertEqual(ParkingZone.campusBStudent.latitude, 26.158319)
+        XCTAssertEqual(ParkingZone.campusBStudent.longitude, 50.546641)
+        XCTAssertEqual(ParkingZone.campusBStudent.verificationRadiusMeters, 90)
+    }
+
+    func testCampusBCentreInsideAndOutsideRespectNinetyMetreRadius() {
+        let verifier = ZoneVerifier()
+        let centre = verifier.verify(
+            zone: .campusBStudent,
+            reading: reading(latitude: 26.158319, longitude: 50.546641, accuracy: 5), now: now
+        )
+        let inside = verifier.verify(
+            zone: .campusBStudent,
+            reading: reading(latitude: 26.158800, longitude: 50.546641, accuracy: 5), now: now
+        )
+        let outside = verifier.verify(
+            zone: .campusBStudent,
+            reading: reading(latitude: 26.159500, longitude: 50.546641, accuracy: 5), now: now
+        )
+
+        XCTAssertTrue(centre.accepted)
+        XCTAssertEqual(centre.distanceMeters ?? -1, 0, accuracy: 0.01)
+        XCTAssertTrue(inside.accepted)
+        XCTAssertLessThan(inside.distanceMeters ?? .infinity, 90)
+        XCTAssertFalse(outside.accepted)
+        XCTAssertEqual(outside.failure, .outsideZone)
+        XCTAssertGreaterThan(outside.distanceMeters ?? 0, 90 + 5)
+    }
+
+    func testNearestZoneSuggestionWorksInBothDirections() {
+        let verifier = ZoneVerifier()
+        let atCampusB = reading(latitude: 26.158319, longitude: 50.546641, accuracy: 5)
+        let atCampusA = reading(latitude: 26.164736, longitude: 50.543676, accuracy: 5)
+
+        XCTAssertEqual(
+            verifier.suggestedAlternative(
+                to: .campusAStudent, among: ParkingZone.supportedDefaults,
+                reading: atCampusB, now: now
+            )?.id,
+            ParkingZone.campusBStudent.id
+        )
+        XCTAssertEqual(
+            verifier.suggestedAlternative(
+                to: .campusBStudent, among: ParkingZone.supportedDefaults,
+                reading: atCampusA, now: now
+            )?.id,
+            ParkingZone.campusAStudent.id
+        )
+    }
+
     func testExactCentreAndClearlyInsideAreAccepted() {
         let verifier = ZoneVerifier()
         let centre = verifier.verify(
@@ -209,6 +288,58 @@ final class LocationAndPublishStateTests: XCTestCase {
         XCTAssertEqual(store.verificationState, .unavailable)
     }
 
+    func testWrongZoneSuggestionAndExplicitSwitchRerunVerification() async {
+        let provider = StubLocationProvider(status: .authorized)
+        provider.result = .success(LocationReading(
+            latitude: ParkingZone.campusBStudent.latitude,
+            longitude: ParkingZone.campusBStudent.longitude,
+            horizontalAccuracy: 5,
+            timestamp: .now
+        ))
+        let store = LocationStore(provider: provider)
+
+        await store.verify(zone: .campusAStudent, availableZones: ParkingZone.supportedDefaults)
+        XCTAssertEqual(store.suggestedZoneID, ParkingZone.campusBStudent.id)
+        XCTAssertEqual(store.verificationZoneID, ParkingZone.campusAStudent.id)
+        XCTAssertFalse(store.verificationState.isVerified)
+
+        await store.switchAndVerify(
+            to: .campusBStudent,
+            availableZones: ParkingZone.supportedDefaults
+        )
+        XCTAssertNil(store.suggestedZoneID)
+        XCTAssertEqual(store.verificationZoneID, ParkingZone.campusBStudent.id)
+        XCTAssertTrue(store.verificationState.isVerified)
+        XCTAssertEqual(provider.locationRequestCount, 2)
+    }
+
+    func testChangingZonesInvalidatesPreviousVerification() async {
+        let provider = StubLocationProvider(status: .authorized)
+        provider.result = .success(reading(latitude: 26.164736, accuracy: 5))
+        let store = LocationStore(provider: provider)
+        await store.verify(zone: .campusAStudent, availableZones: ParkingZone.supportedDefaults)
+        XCTAssertTrue(store.isVerified(for: ParkingZone.campusAStudent.id))
+
+        store.invalidateVerification()
+
+        XCTAssertEqual(store.verificationState, .notRequested)
+        XCTAssertNil(store.verificationZoneID)
+        XCTAssertNil(store.latestReading)
+        XCTAssertFalse(store.isVerified(for: ParkingZone.campusBStudent.id))
+    }
+
+    func testCampusALocationSuggestsSwitchWhenCampusBIsSelected() async {
+        let provider = StubLocationProvider(status: .authorized)
+        provider.result = .success(reading(latitude: 26.164736, accuracy: 5))
+        let store = LocationStore(provider: provider)
+
+        await store.verify(zone: .campusBStudent, availableZones: ParkingZone.supportedDefaults)
+
+        XCTAssertEqual(store.verificationZoneID, ParkingZone.campusBStudent.id)
+        XCTAssertEqual(store.suggestedZoneID, ParkingZone.campusAStudent.id)
+        XCTAssertFalse(store.verificationState.isVerified)
+    }
+
     func testDuplicatePublishRequestsAreBlockedAndPayloadIsPreserved() async {
         let userID = UUID()
         let vehicleID = UUID()
@@ -239,6 +370,31 @@ final class LocationAndPublishStateTests: XCTestCase {
         XCTAssertEqual(repository.request?.location, location)
     }
 
+    func testSelectedCampusBZoneIDAndLocationReachRepository() async {
+        let repository = SuspendedPublishRepository()
+        let store = SignalStore(repository: repository, userID: UUID())
+        let vehicleID = UUID()
+        let location = LocationReading(
+            latitude: ParkingZone.campusBStudent.latitude,
+            longitude: ParkingZone.campusBStudent.longitude,
+            horizontalAccuracy: 6,
+            timestamp: .now
+        )
+        let task = Task {
+            await store.publish(
+                zone: .campusBStudent, minutes: 2,
+                ownerVehicleID: vehicleID, location: location, now: now
+            )
+        }
+        while repository.publishCount == 0 { await Task.yield() }
+        repository.resumePublish()
+
+        let published = await task.value
+        XCTAssertTrue(published)
+        XCTAssertEqual(repository.request?.zoneID, ParkingZone.campusBStudent.id)
+        XCTAssertEqual(repository.request?.location, location)
+    }
+
     private func eligible(_ vehicleID: UUID?, _ state: LocationStore.VerificationState) -> Bool {
         PublishSignalEligibility.canPublish(
             vehicleID: vehicleID, minutes: 5, locationState: state, isPublishing: false
@@ -253,6 +409,52 @@ final class LocationAndPublishStateTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ParkingZoneStoreTests: XCTestCase {
+    func testSelectingEitherZonePersistsAndRestoresSelection() async {
+        let persistence = MemoryZoneSelection()
+        let repository = StubZoneRepository(zones: ParkingZone.supportedDefaults)
+        let store = ParkingZoneStore(repository: repository, selectionPersistence: persistence)
+        await store.load()
+        XCTAssertEqual(store.selectedZoneID, ParkingZone.campusAStudent.id)
+
+        XCTAssertTrue(store.selectZone(id: ParkingZone.campusBStudent.id))
+        XCTAssertEqual(persistence.selectedZoneID, ParkingZone.campusBStudent.id)
+
+        let restored = ParkingZoneStore(repository: repository, selectionPersistence: persistence)
+        await restored.load()
+        XCTAssertEqual(restored.selectedZoneID, ParkingZone.campusBStudent.id)
+        XCTAssertEqual(restored.selectedZone?.landmark, "Beside Building 20")
+    }
+
+    func testInvalidPersistedZoneFallsBackToFirstSupportedActiveZone() async {
+        let persistence = MemoryZoneSelection(selectedZoneID: "faculty_only")
+        let inactiveB = ParkingZone.campusBStudent.withActive(false)
+        let store = ParkingZoneStore(
+            repository: StubZoneRepository(zones: [inactiveB, .campusAStudent]),
+            selectionPersistence: persistence
+        )
+
+        await store.load()
+
+        XCTAssertEqual(store.zones.map(\.id), [ParkingZone.campusAStudent.id])
+        XCTAssertEqual(store.selectedZoneID, ParkingZone.campusAStudent.id)
+        XCTAssertEqual(persistence.selectedZoneID, ParkingZone.campusAStudent.id)
+        XCTAssertFalse(store.selectZone(id: inactiveB.id))
+    }
+
+    func testSignalsFilterByExactSelectedZoneWithoutDiscardingOtherZone() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let a = ParkingSignal.testSignal(zone: .campusAStudent, now: now)
+        let b = ParkingSignal.testSignal(zone: .campusBStudent, now: now)
+        let all = ParkingSignal.visible([b, a], at: now)
+
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual(ParkingSignal.visible(all, in: .campusAStudent, at: now).map(\.id), [a.id])
+        XCTAssertEqual(ParkingSignal.visible(all, in: .campusBStudent, at: now).map(\.id), [b.id])
+    }
+}
+
 private extension ParkingZone {
     static func testZone(radius: Double, isActive: Bool = true) -> ParkingZone {
         ParkingZone(
@@ -262,6 +464,49 @@ private extension ParkingZone {
             createdAt: .distantPast, updatedAt: .distantPast
         )
     }
+
+    func withDates(_ createdAt: Date, _ updatedAt: Date) -> ParkingZone {
+        ParkingZone(
+            id: id, name: name, campus: campus, landmark: landmark,
+            latitude: latitude, longitude: longitude,
+            verificationRadiusMeters: verificationRadiusMeters, isActive: isActive,
+            createdAt: createdAt, updatedAt: updatedAt
+        )
+    }
+
+    func withActive(_ isActive: Bool) -> ParkingZone {
+        ParkingZone(
+            id: id, name: name, campus: campus, landmark: landmark,
+            latitude: latitude, longitude: longitude,
+            verificationRadiusMeters: verificationRadiusMeters, isActive: isActive,
+            createdAt: createdAt, updatedAt: updatedAt
+        )
+    }
+}
+
+private extension ParkingSignal {
+    static func testSignal(zone: ParkingZone, now: Date) -> ParkingSignal {
+        ParkingSignal(
+            id: UUID(), createdBy: UUID(), zoneID: zone.id,
+            campus: zone.campus, zone: zone.name,
+            leavingAt: now.addingTimeInterval(120),
+            expiresAt: now.addingTimeInterval(420),
+            status: .active, createdAt: now
+        )
+    }
+}
+
+@MainActor
+private final class StubZoneRepository: ParkingZoneRepository {
+    let zones: [ParkingZone]
+    init(zones: [ParkingZone]) { self.zones = zones }
+    func fetchActiveZones() async throws -> [ParkingZone] { zones }
+}
+
+@MainActor
+private final class MemoryZoneSelection: ParkingZoneSelectionPersisting {
+    var selectedZoneID: String?
+    init(selectedZoneID: String? = nil) { self.selectedZoneID = selectedZoneID }
 }
 
 @MainActor

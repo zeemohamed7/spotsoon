@@ -25,7 +25,18 @@ nonisolated struct ParkingZone: Codable, Identifiable, Equatable, Sendable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    var isSupported: Bool { id == Self.campusAStudent.id }
+    var isSupported: Bool { Self.supportedIDs.contains(id) }
+
+    var alternativeContext: String? {
+        id == Self.campusBStudent.id ? "formerly BTI" : nil
+    }
+
+    var selectionLabel: String {
+        if let alternativeContext { return "\(campus.title) · \(alternativeContext)" }
+        return campus.title
+    }
+
+    static let supportedIDs: Set<String> = ["campus_a_student", "campus_b_student"]
 
     static let campusAStudent = ParkingZone(
         id: "campus_a_student",
@@ -39,6 +50,21 @@ nonisolated struct ParkingZone: Codable, Identifiable, Equatable, Sendable {
         createdAt: .distantPast,
         updatedAt: .distantPast
     )
+
+    static let campusBStudent = ParkingZone(
+        id: "campus_b_student",
+        name: "Campus B Student Car Park",
+        campus: .campusB,
+        landmark: "Beside Building 20",
+        latitude: 26.158319,
+        longitude: 50.546641,
+        verificationRadiusMeters: 90,
+        isActive: true,
+        createdAt: .distantPast,
+        updatedAt: .distantPast
+    )
+
+    static let supportedDefaults = [campusAStudent, campusBStudent]
 }
 
 nonisolated struct LocationReading: Equatable, Sendable {

@@ -409,17 +409,53 @@ final class SignalStoreTests: XCTestCase {
         await run.value
     }
 
+    func testRealtimeUpdatesPreserveOtherZoneAndSelectedZoneFiltering() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let campusA = signal(owner: owner, zone: .campusAStudent)
+        let campusB = signal(owner: owner, zone: .campusBStudent)
+        let backend = TestLifecycleBackend(now: now, signals: [campusA, campusB])
+        let repository = TestRepository(backend: backend, userID: owner)
+        let store = SignalStore(repository: repository, userID: owner)
+        let run = Task { await store.run() }
+        await waitUntil { repository.isObserving && store.signals.count == 2 }
+
+        backend.signals[campusB.id] = signal(
+            id: campusB.id, owner: owner, status: .arrived,
+            claimant: claimant, zone: .campusBStudent
+        )
+        await repository.emit(.changed)
+        await waitUntil { store.signals.first(where: { $0.id == campusB.id })?.status == .arrived }
+
+        XCTAssertNotNil(store.signals.first(where: { $0.id == campusA.id }))
+        XCTAssertEqual(ParkingSignal.visible(store.signals, in: .campusAStudent, at: now).map(\.id), [campusA.id])
+        XCTAssertEqual(ParkingSignal.visible(store.signals, in: .campusBStudent, at: now).map(\.id), [campusB.id])
+
+        backend.signals[campusB.id] = signal(
+            id: campusB.id, owner: owner, status: .completed, zone: .campusBStudent
+        )
+        await repository.emit(.changed)
+        await waitUntil { store.signals.count == 1 }
+        XCTAssertEqual(store.signals.first?.id, campusA.id)
+
+        repository.finishObservation()
+        run.cancel()
+        await run.value
+    }
+
     private func signal(
         id: UUID = UUID(),
         owner: UUID,
         leaving: TimeInterval = 120,
         expiry: TimeInterval = 900,
         status: ParkingSignal.Status = .active,
-        claimant: UUID? = nil
+        claimant: UUID? = nil,
+        zone: ParkingZone = .campusAStudent
     ) -> ParkingSignal {
         let keepsClaim = [.claimed, .arrived, .vacated].contains(status)
         return ParkingSignal(
-            id: id, createdBy: owner, campus: .campusA, zone: "A1",
+            id: id, createdBy: owner, zoneID: zone.id,
+            campus: zone.campus, zone: zone.name,
             leavingAt: now.addingTimeInterval(leaving),
             expiresAt: now.addingTimeInterval(expiry), status: status, createdAt: now,
             claimedBy: keepsClaim ? claimant : nil,

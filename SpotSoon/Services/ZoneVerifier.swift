@@ -16,7 +16,7 @@ nonisolated enum ZoneVerificationFailure: LocalizedError, Equatable, Sendable {
         case .invalidLocation: "A valid location reading is unavailable."
         case .staleLocation: "Your location is out of date. Try again."
         case .inaccurateLocation: "GPS accuracy must improve to 65 metres or better."
-        case .outsideZone: "You are outside the Campus A Student Car Park verification area."
+        case .outsideZone: "You are outside the selected parking-zone verification area."
         }
     }
 }
@@ -78,6 +78,26 @@ nonisolated struct ZoneVerifier: Sendable {
             accepted: true,
             failure: nil
         )
+    }
+
+    func suggestedAlternative(
+        to selectedZone: ParkingZone,
+        among zones: [ParkingZone],
+        reading: LocationReading,
+        now: Date = .now
+    ) -> ParkingZone? {
+        guard verify(zone: selectedZone, reading: reading, now: now).failure == .outsideZone else {
+            return nil
+        }
+        let device = CLLocation(latitude: reading.latitude, longitude: reading.longitude)
+        return zones.lazy
+            .filter { $0.id != selectedZone.id && $0.isActive && $0.isSupported }
+            .compactMap { zone -> (ParkingZone, Double)? in
+                let centre = CLLocation(latitude: zone.latitude, longitude: zone.longitude)
+                let distance = device.distance(from: centre)
+                return distance <= zone.verificationRadiusMeters ? (zone, distance) : nil
+            }
+            .min { $0.1 < $1.1 }?.0
     }
 
     private func failure(_ reason: ZoneVerificationFailure, accuracy: Double) -> ZoneVerificationResult {

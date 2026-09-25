@@ -23,6 +23,12 @@ final class SignalStore {
         self.userID = userID
     }
 
+    var hasOpenSignalOwnedByCurrentUser: Bool {
+        signals.contains {
+            $0.createdBy == userID && !$0.status.isTerminal && $0.expiresAt > Date.now
+        }
+    }
+
     func refresh(now: Date = .now) async {
         refreshVersion += 1
         let version = refreshVersion
@@ -90,6 +96,10 @@ final class SignalStore {
         now: Date = .now
     ) async -> Bool {
         guard !isPublishing else { return false }
+        guard !hasOpenSignalOwnedByCurrentUser else {
+            publishError = ParkingSignalRepositoryError.activeSignalExists.localizedDescription
+            return false
+        }
         guard let ownerVehicleID else {
             publishError = "Select the vehicle you’re leaving in."
             return false

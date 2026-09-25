@@ -11,22 +11,54 @@ struct SignalListView: View {
     @State private var signalToClaim: ParkingSignal?
     @State private var handoverPass: HandoverDetails?
 
+    private var signalCounts: [String: Int] {
+        let visible = ParkingSignal.visible(store.signals, at: .now)
+        return Dictionary(uniqueKeysWithValues: zoneStore.zones.map { zone in
+            (zone.id, visible.lazy.filter { $0.belongs(to: zone) }.count)
+        })
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                ZoneMapView(zoneStore: zoneStore, locationStore: locationStore)
+                ZoneMapView(
+                    zoneStore: zoneStore,
+                    locationStore: locationStore,
+                    signalCounts: signalCounts
+                )
                     .frame(height: 300)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let visible = ParkingSignal.visible(store.signals, at: context.date)
-                        .filter { $0.campus == (zoneStore.selectedZone?.campus ?? .campusA) }
+                    let visible = ParkingSignal.visible(
+                        store.signals,
+                        in: zoneStore.selectedZone,
+                        at: context.date
+                    )
                     List {
                         Button("Create leaving signal", systemImage: "plus") {
                             store.publishError = nil
                             showingCreate = true
                         }
+                        .disabled(store.hasOpenSignalOwnedByCurrentUser)
+                        if store.hasOpenSignalOwnedByCurrentUser {
+                            Text("You already have an open parking signal. Finish or cancel it before creating another.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                         if let zone = zoneStore.selectedZone {
+                            Picker("Parking area", selection: Binding(
+                                get: { zone.id },
+                                set: { selectZone($0) }
+                            )) {
+                                ForEach(zoneStore.zones) { option in
+                                    Text(option.selectionLabel).tag(option.id)
+                                }
+                            }
+                            .pickerStyle(.segmented)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(zone.name).font(.headline)
+                                if let context = zone.alternativeContext {
+                                    Text(context).font(.caption).foregroundStyle(.secondary)
+                                }
                                 Text(zone.landmark).font(.subheadline).foregroundStyle(.secondary)
                             }
                         }
@@ -80,7 +112,8 @@ struct SignalListView: View {
                         store: store,
                         vehicleStore: vehicleStore,
                         locationStore: locationStore,
-                        zone: zone
+                        zoneStore: zoneStore,
+                        initialZone: zone
                     )
                 } else {
                     ContentUnavailableView(
@@ -99,5 +132,10 @@ struct SignalListView: View {
             if scenePhase == .active { await store.run() }
         }
         .task { if zoneStore.zones.isEmpty { await zoneStore.load() } }
+    }
+
+    private func selectZone(_ id: String) {
+        guard id != zoneStore.selectedZoneID, zoneStore.selectZone(id: id) else { return }
+        locationStore.invalidateVerification()
     }
 }
