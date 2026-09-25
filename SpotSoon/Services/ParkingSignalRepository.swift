@@ -4,7 +4,7 @@ import Supabase
 @MainActor
 protocol ParkingSignalRepository {
     func fetchFeed(now: Date) async throws -> SignalFeed
-    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal
+    func publish(_ request: PublishParkingSignalRequest) async throws -> ParkingSignal
     func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal
     func markArrived(signalID: UUID) async throws -> ParkingSignal
     func releaseClaim(signalID: UUID) async throws -> ParkingSignal
@@ -15,12 +15,23 @@ protocol ParkingSignalRepository {
     func observe(_ receive: @escaping @MainActor (SignalEvent) async -> Void) async throws
 }
 
+nonisolated struct PublishParkingSignalRequest: Equatable, Sendable {
+    let signal: ParkingSignal
+    let zoneID: String
+    let ownerVehicleID: UUID
+    let location: LocationReading
+}
+
 enum SignalEvent { case changed, connected, disconnected }
 
 enum ParkingSignalRepositoryError: LocalizedError, Equatable {
     case signalUnavailable
     case transitionUnavailable
     case vehicleUnavailable
+    case zoneUnavailable
+    case locationUnavailable
+    case locationInaccurate
+    case outsideParkingZone
     case databaseSetupRequired
     case invalidSignalResponse
 
@@ -29,8 +40,12 @@ enum ParkingSignalRepositoryError: LocalizedError, Equatable {
         case .signalUnavailable: "This signal was already claimed or is no longer available."
         case .transitionUnavailable: "This action is no longer available. Refresh to see the latest signal."
         case .vehicleUnavailable: "Select a saved vehicle that belongs to this account."
+        case .zoneUnavailable: "The selected parking zone is unavailable."
+        case .locationUnavailable: "A valid current location is unavailable. Try again."
+        case .locationInaccurate: "GPS accuracy must improve to 65 metres or better."
+        case .outsideParkingZone: "You must be inside Campus A Student Car Park to publish."
         case .databaseSetupRequired:
-            "Supabase database update required. Run migration 202609240001_add_garage_and_vehicle_snapshots.sql, then restart SpotSoon."
+            "Supabase database update required. Run the pending ordered migrations through 202609250002_add_gps_verified_parking_zone.sql, then restart SpotSoon."
         case .invalidSignalResponse: "The server returned an invalid parking signal."
         }
     }
@@ -62,13 +77,10 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
         }
     }
 
-    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal {
+    func publish(_ request: PublishParkingSignalRequest) async throws -> ParkingSignal {
         do {
             let response: SignalResponse = try await client
-                .rpc("publish_parking_signal", params: PublishParameters(
-                    signal: signal,
-                    ownerVehicleID: ownerVehicleID
-                ))
+                .rpc("publish_parking_signal", params: PublishParameters(request: request))
                 .execute()
                 .value
             return response.signal
@@ -132,21 +144,37 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
         let diagnostic = [error.code, error.message, error.details, error.hint]
             .compactMap { $0 }
             .joined(separator: " ")
-            .lowercased()
+        return Self.repositoryError(for: diagnostic) ?? error
+    }
+
+    nonisolated static func repositoryError(for diagnostic: String) -> ParkingSignalRepositoryError? {
+        let diagnostic = diagnostic.lowercased()
         if diagnostic.contains("signal_unavailable") {
-            return ParkingSignalRepositoryError.signalUnavailable
+            return .signalUnavailable
         }
         if diagnostic.contains("transition_unavailable") {
-            return ParkingSignalRepositoryError.transitionUnavailable
+            return .transitionUnavailable
         }
         if diagnostic.contains("vehicle_unavailable") {
-            return ParkingSignalRepositoryError.vehicleUnavailable
+            return .vehicleUnavailable
+        }
+        if diagnostic.contains("zone_unavailable") {
+            return .zoneUnavailable
+        }
+        if diagnostic.contains("location_unavailable") {
+            return .locationUnavailable
+        }
+        if diagnostic.contains("location_inaccurate") {
+            return .locationInaccurate
+        }
+        if diagnostic.contains("outside_parking_zone") {
+            return .outsideParkingZone
         }
         if diagnostic.contains("pgrst202")
             || diagnostic.contains("expire_parking_signals") {
-            return ParkingSignalRepositoryError.databaseSetupRequired
+            return .databaseSetupRequired
         }
-        return error
+        return nil
     }
 
     // The store owns one observation task. Cancellation tears down both streams and the channel.
@@ -197,23 +225,29 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
 }
 
 private struct PublishParameters: Encodable {
-    let campus: String
-    let zone: String
+    let zoneID: String
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
     let leavingAt: Date
     let expiresAt: Date
     let ownerVehicleID: UUID
 
-    init(signal: ParkingSignal, ownerVehicleID: UUID) {
-        campus = signal.campus.rawValue
-        zone = signal.zone
-        leavingAt = signal.leavingAt
-        expiresAt = signal.expiresAt
-        self.ownerVehicleID = ownerVehicleID
+    init(request: PublishParkingSignalRequest) {
+        zoneID = request.zoneID
+        latitude = request.location.latitude
+        longitude = request.location.longitude
+        horizontalAccuracy = request.location.horizontalAccuracy
+        leavingAt = request.signal.leavingAt
+        expiresAt = request.signal.expiresAt
+        ownerVehicleID = request.ownerVehicleID
     }
 
     enum CodingKeys: String, CodingKey {
-        case campus = "p_campus"
-        case zone = "p_zone"
+        case zoneID = "p_zone_id"
+        case latitude = "p_device_latitude"
+        case longitude = "p_device_longitude"
+        case horizontalAccuracy = "p_horizontal_accuracy"
         case leavingAt = "p_leaving_at"
         case expiresAt = "p_expires_at"
         case ownerVehicleID = "p_owner_vehicle_id"

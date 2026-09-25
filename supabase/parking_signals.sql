@@ -5,11 +5,37 @@
 
 begin;
 
+-- Trusted parking-zone configuration --------------------------------------
+
+create table public.parking_zones (
+    id text primary key,
+    name text not null check (length(btrim(name)) between 1 and 100),
+    campus text not null check (campus in ('campus_a', 'campus_b')),
+    landmark text not null check (length(btrim(landmark)) between 1 and 160),
+    latitude double precision not null check (latitude between -90 and 90),
+    longitude double precision not null check (longitude between -180 and 180),
+    verification_radius_meters double precision not null
+        check (verification_radius_meters between 1 and 2000),
+    is_active boolean not null default true,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint parking_zones_id_check check (id ~ '^[a-z0-9_]{1,64}$')
+);
+
+insert into public.parking_zones (
+    id, name, campus, landmark, latitude, longitude,
+    verification_radius_meters, is_active
+) values (
+    'campus_a_student', 'Campus A Student Car Park', 'campus_a',
+    'West of the stadium', 26.164736, 50.543676, 140, true
+);
+
 -- Public feed --------------------------------------------------------------
 
 create table public.parking_signals (
     id uuid primary key default gen_random_uuid(),
     created_by uuid not null references auth.users(id) on delete cascade,
+    zone_id text references public.parking_zones(id) on update cascade on delete restrict,
     campus text not null,
     zone text not null,
     leaving_at timestamptz not null,
@@ -21,10 +47,8 @@ create table public.parking_signals (
 
     constraint parking_signals_campus_check
         check (campus in ('campus_a', 'campus_b')),
-    constraint parking_signals_zone_check check (
-        (campus = 'campus_a' and zone in ('A1', 'A2', 'A3'))
-        or (campus = 'campus_b' and zone in ('B1', 'B2', 'B3'))
-    ),
+    constraint parking_signals_zone_check
+        check (zone_id is not null and length(btrim(zone)) between 1 and 100),
     constraint parking_signals_status_check check (status in (
         'active', 'claimed', 'arrived', 'vacated',
         'completed', 'unavailable', 'cancelled', 'expired'
@@ -52,6 +76,9 @@ create index parking_signals_visible_leaving_idx
     on public.parking_signals (leaving_at)
     where status in ('active', 'claimed', 'arrived', 'vacated');
 create index parking_signals_created_by_idx on public.parking_signals (created_by);
+create index parking_signals_zone_visible_idx
+    on public.parking_signals (zone_id, leaving_at)
+    where status in ('active', 'claimed', 'arrived', 'vacated');
 
 -- Private saved garage -----------------------------------------------------
 
@@ -203,14 +230,17 @@ create table public.parking_signal_handovers (
 -- RLS and client privileges ------------------------------------------------
 
 alter table public.parking_signals enable row level security;
+alter table public.parking_zones enable row level security;
 alter table public.vehicles enable row level security;
 alter table public.parking_signal_handovers enable row level security;
 
 revoke all on table public.parking_signals from anon, authenticated;
+revoke all on table public.parking_zones from anon, authenticated;
 revoke all on table public.vehicles from anon, authenticated;
 revoke all on table public.parking_signal_handovers from anon, authenticated;
 
 grant select on table public.parking_signals to authenticated;
+grant select on table public.parking_zones to authenticated;
 grant select, delete on table public.vehicles to authenticated;
 grant insert (user_id, nickname, color, vehicle_type, make, model, plate_suffix, is_current)
     on table public.vehicles to authenticated;
@@ -220,6 +250,8 @@ grant select on table public.parking_signal_handovers to authenticated;
 
 create policy "Authenticated users can read signals"
     on public.parking_signals for select to authenticated using (true);
+create policy "Authenticated users can read active parking zones"
+    on public.parking_zones for select to authenticated using (is_active);
 create policy "Users can read their vehicles"
     on public.vehicles for select to authenticated
     using (user_id = (select auth.uid()));
@@ -277,9 +309,33 @@ $$;
 
 -- Atomic publish and claim RPCs -------------------------------------------
 
+create function public.haversine_distance_meters(
+    p_latitude_1 double precision,
+    p_longitude_1 double precision,
+    p_latitude_2 double precision,
+    p_longitude_2 double precision
+)
+returns double precision
+language sql
+immutable
+strict
+set search_path = ''
+as $$
+    select 6371000.0 * 2.0 * pg_catalog.asin(
+        pg_catalog.sqrt(
+            pg_catalog.power(pg_catalog.sin(pg_catalog.radians(p_latitude_2 - p_latitude_1) / 2.0), 2)
+            + pg_catalog.cos(pg_catalog.radians(p_latitude_1))
+            * pg_catalog.cos(pg_catalog.radians(p_latitude_2))
+            * pg_catalog.power(pg_catalog.sin(pg_catalog.radians(p_longitude_2 - p_longitude_1) / 2.0), 2)
+        )
+    );
+$$;
+
 create function public.publish_parking_signal(
-    p_campus text,
-    p_zone text,
+    p_zone_id text,
+    p_device_latitude double precision,
+    p_device_longitude double precision,
+    p_horizontal_accuracy double precision,
     p_leaving_at timestamptz,
     p_expires_at timestamptz,
     p_owner_vehicle_id uuid
@@ -291,26 +347,56 @@ set search_path = ''
 as $$
 declare
     v_user_id uuid := auth.uid();
+    v_zone public.parking_zones;
     v_vehicle public.vehicles;
     v_signal public.parking_signals;
+    v_distance double precision;
+    v_tolerance double precision;
 begin
     if v_user_id is null then
         raise exception using errcode = '42501', message = 'authentication_required';
     end if;
-    if p_leaving_at <= now()
-       or p_leaving_at > now() + interval '11 minutes'
-       or p_expires_at <> p_leaving_at + interval '5 minutes' then
-        raise exception using errcode = '22023', message = 'invalid_signal_time';
+    select * into v_zone from public.parking_zones
+    where id = p_zone_id and is_active;
+    if not found then
+        raise exception using errcode = 'P0001', message = 'zone_unavailable';
     end if;
     select * into v_vehicle from public.vehicles
     where id = p_owner_vehicle_id and user_id = v_user_id;
     if not found then
         raise exception using errcode = 'P0001', message = 'vehicle_unavailable';
     end if;
+
+    if p_device_latitude is null or p_device_longitude is null
+       or p_horizontal_accuracy is null
+       or p_device_latitude::text in ('NaN', 'Infinity', '-Infinity')
+       or p_device_longitude::text in ('NaN', 'Infinity', '-Infinity')
+       or p_horizontal_accuracy::text in ('NaN', 'Infinity', '-Infinity')
+       or p_device_latitude not between -90 and 90
+       or p_device_longitude not between -180 and 180
+       or p_horizontal_accuracy < 0 then
+        raise exception using errcode = '22023', message = 'location_unavailable';
+    end if;
+    if p_horizontal_accuracy > 65 then
+        raise exception using errcode = '22023', message = 'location_inaccurate';
+    end if;
+    v_distance := public.haversine_distance_meters(
+        v_zone.latitude, v_zone.longitude, p_device_latitude, p_device_longitude
+    );
+    v_tolerance := least(p_horizontal_accuracy, 25.0);
+    if v_distance > v_zone.verification_radius_meters + v_tolerance then
+        raise exception using errcode = 'P0001', message = 'outside_parking_zone';
+    end if;
+    if p_leaving_at <= now()
+       or p_leaving_at > now() + interval '11 minutes'
+       or p_expires_at <> p_leaving_at + interval '5 minutes' then
+        raise exception using errcode = '22023', message = 'invalid_signal_time';
+    end if;
     insert into public.parking_signals (
-        created_by, campus, zone, leaving_at, expires_at, status
+        created_by, zone_id, campus, zone, leaving_at, expires_at, status
     ) values (
-        v_user_id, p_campus, p_zone, p_leaving_at, p_expires_at, 'active'
+        v_user_id, v_zone.id, v_zone.campus, v_zone.name,
+        p_leaving_at, p_expires_at, 'active'
     ) returning * into v_signal;
     insert into public.parking_signal_handovers (
         signal_id, owner_nickname, owner_color, owner_vehicle_type,
@@ -483,7 +569,8 @@ end; $$;
 revoke all on function public.touch_vehicle_updated_at() from public, anon, authenticated, service_role;
 revoke all on function public.select_vehicle_after_delete() from public, anon, authenticated, service_role;
 revoke all on function public.set_current_vehicle(uuid) from public, anon, service_role;
-revoke all on function public.publish_parking_signal(text, text, timestamptz, timestamptz, uuid) from public, anon, service_role;
+revoke all on function public.haversine_distance_meters(double precision, double precision, double precision, double precision) from public, anon, authenticated, service_role;
+revoke all on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid) from public, anon, service_role;
 revoke all on function public.claim_parking_signal(uuid, uuid) from public, anon, service_role;
 revoke all on function public.arrive_at_parking_signal(uuid) from public, anon, service_role;
 revoke all on function public.release_parking_signal(uuid) from public, anon, service_role;
@@ -494,7 +581,7 @@ revoke all on function public.mark_parking_signal_unavailable(uuid) from public,
 revoke all on function public.expire_parking_signals() from public, anon, service_role;
 
 grant execute on function public.set_current_vehicle(uuid) to authenticated;
-grant execute on function public.publish_parking_signal(text, text, timestamptz, timestamptz, uuid) to authenticated;
+grant execute on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid) to authenticated;
 grant execute on function public.claim_parking_signal(uuid, uuid) to authenticated;
 grant execute on function public.arrive_at_parking_signal(uuid) to authenticated;
 grant execute on function public.release_parking_signal(uuid) to authenticated;
@@ -504,8 +591,8 @@ grant execute on function public.complete_parking_signal(uuid) to authenticated;
 grant execute on function public.mark_parking_signal_unavailable(uuid) to authenticated;
 grant execute on function public.expire_parking_signals() to authenticated;
 
--- Only public lifecycle rows are broadcast. Saved vehicles and private
--- handover snapshots deliberately stay out of the Realtime publication.
+-- Only public lifecycle rows are broadcast. Static zone definitions, saved
+-- vehicles, and private handover snapshots stay out of Realtime.
 alter publication supabase_realtime add table public.parking_signals;
 
 commit;

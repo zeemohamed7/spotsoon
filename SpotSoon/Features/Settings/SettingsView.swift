@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     let vehicleStore: VehicleStore
+    let locationStore: LocationStore
 
     var body: some View {
         List {
@@ -21,7 +22,15 @@ struct SettingsView: View {
                     Text(vehicleStore.currentVehicle?.nickname ?? "None")
                 }
                 LabeledContent("Location Access") {
-                    Text("Coming later").foregroundStyle(.secondary)
+                    Text(locationStore.authorizationState.title)
+                        .foregroundStyle(locationStore.authorizationState == .authorized ? .primary : .secondary)
+                }
+                Text("Location is requested only to verify that you are at the selected parking area when publishing. SpotSoon does not track you in the background.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if locationStore.authorizationState == .denied {
+                    Button("Open Location Settings", systemImage: "gear") {
+                        locationStore.openSettings()
+                    }
                 }
             }
 
@@ -35,6 +44,9 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .task { if vehicleStore.vehicles.isEmpty { await vehicleStore.load() } }
+        .task {
+            locationStore.refreshAuthorizationState()
+            if vehicleStore.vehicles.isEmpty { await vehicleStore.load() }
+        }
     }
 }

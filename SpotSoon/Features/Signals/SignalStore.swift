@@ -11,6 +11,7 @@ final class SignalStore {
     var listError: String?
     var connectionError: String?
     var publishError: String?
+    private(set) var publishRequiresLocationRefresh = false
     private(set) var actionErrors: [UUID: String] = [:]
     let userID: UUID
     private let repository: any ParkingSignalRepository
@@ -82,10 +83,10 @@ final class SignalStore {
     }
 
     func publish(
-        campus: ParkingSignal.Campus,
-        zone: String,
+        zone: ParkingZone,
         minutes: Int,
         ownerVehicleID: UUID?,
+        location: LocationReading,
         now: Date = .now
     ) async -> Bool {
         guard !isPublishing else { return false }
@@ -93,22 +94,33 @@ final class SignalStore {
             publishError = "Select the vehicle you’re leaving in."
             return false
         }
-        guard campus.zones.contains(zone), [2, 5, 10].contains(minutes) else {
-            publishError = "Choose a valid zone and leaving time."
+        guard zone.isActive, zone.isSupported, [2, 5, 10].contains(minutes) else {
+            publishError = "Choose a valid active parking zone and leaving time."
             return false
         }
         isPublishing = true
         publishError = nil
+        publishRequiresLocationRefresh = false
         defer { isPublishing = false }
         do {
-            let signal = ParkingSignal.leaving(userID: userID, campus: campus, zone: zone, minutes: minutes, now: now)
-            let published = try await repository.publish(signal, ownerVehicleID: ownerVehicleID)
+            let signal = ParkingSignal.leaving(userID: userID, parkingZone: zone, minutes: minutes, now: now)
+            let published = try await repository.publish(PublishParkingSignalRequest(
+                signal: signal,
+                zoneID: zone.id,
+                ownerVehicleID: ownerVehicleID,
+                location: location
+            ))
             guard published.createdBy == userID else { throw ParkingSignalRepositoryError.invalidSignalResponse }
             apply(published, now: now)
             await refresh()
             return true
         } catch {
             publishError = "Could not publish signal: \(error.localizedDescription)"
+            if let repositoryError = error as? ParkingSignalRepositoryError {
+                publishRequiresLocationRefresh = [
+                    .locationUnavailable, .locationInaccurate, .outsideParkingZone
+                ].contains(repositoryError)
+            }
             return false
         }
     }

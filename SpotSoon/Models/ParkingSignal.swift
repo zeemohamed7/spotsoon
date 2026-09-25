@@ -52,6 +52,7 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
 
     let id: UUID
     let createdBy: UUID
+    let zoneID: String?
     let campus: Campus
     let zone: String
     let leavingAt: Date
@@ -63,6 +64,7 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, campus, zone, status
+        case zoneID = "zone_id"
         case createdBy = "created_by", leavingAt = "leaving_at"
         case expiresAt = "expires_at", createdAt = "created_at"
         case claimedBy = "claimed_by", claimedAt = "claimed_at"
@@ -71,6 +73,7 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
     init(
         id: UUID,
         createdBy: UUID,
+        zoneID: String? = nil,
         campus: Campus,
         zone: String,
         leavingAt: Date,
@@ -82,6 +85,7 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
     ) {
         self.id = id
         self.createdBy = createdBy
+        self.zoneID = zoneID
         self.campus = campus
         self.zone = zone
         self.leavingAt = leavingAt
@@ -92,9 +96,10 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
         self.claimedAt = claimedAt
     }
 
-    static func leaving(userID: UUID, campus: Campus, zone: String, minutes: Int, now: Date) -> Self {
+    static func leaving(userID: UUID, parkingZone: ParkingZone, minutes: Int, now: Date) -> Self {
         let leavingAt = now.addingTimeInterval(TimeInterval(minutes * 60))
-        return Self(id: UUID(), createdBy: userID, campus: campus, zone: zone,
+        return Self(id: UUID(), createdBy: userID, zoneID: parkingZone.id,
+                    campus: parkingZone.campus, zone: parkingZone.name,
                     leavingAt: leavingAt, expiresAt: leavingAt.addingTimeInterval(300),
                     status: .active, createdAt: now)
     }

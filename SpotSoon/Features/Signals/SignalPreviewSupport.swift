@@ -8,7 +8,7 @@ private final class PreviewParkingSignalRepository: ParkingSignalRepository {
     init(feed: SignalFeed) { self.feed = feed }
 
     func fetchFeed(now: Date) async throws -> SignalFeed { feed }
-    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal { signal }
+    func publish(_ request: PublishParkingSignalRequest) async throws -> ParkingSignal { request.signal }
     func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal { try signal(id: signalID) }
     func markArrived(signalID: UUID) async throws -> ParkingSignal { try signal(id: signalID) }
     func releaseClaim(signalID: UUID) async throws -> ParkingSignal { try signal(id: signalID) }
@@ -27,6 +27,25 @@ private final class PreviewParkingSignalRepository: ParkingSignalRepository {
 }
 
 @MainActor
+private final class PreviewZoneRepository: ParkingZoneRepository {
+    func fetchActiveZones() async throws -> [ParkingZone] { [.campusAStudent] }
+}
+
+@MainActor
+private final class PreviewLocationProvider: LocationProviding {
+    var authorizationStatus: LocationAuthorizationState { .authorized }
+    func requestWhenInUseAuthorization() async -> LocationAuthorizationState { .authorized }
+    func requestLocation() async throws -> LocationReading {
+        LocationReading(
+            latitude: ParkingZone.campusAStudent.latitude,
+            longitude: ParkingZone.campusAStudent.longitude,
+            horizontalAccuracy: 8,
+            timestamp: .now
+        )
+    }
+}
+
+@MainActor
 private final class PreviewVehicleRepository: VehicleRepository {
     let vehicle: Vehicle
     init(vehicle: Vehicle) { self.vehicle = vehicle }
@@ -41,6 +60,8 @@ private final class PreviewVehicleRepository: VehicleRepository {
 private struct SignalLifecyclePreview: View {
     private let store: SignalStore
     private let vehicleStore: VehicleStore
+    private let zoneStore: ParkingZoneStore
+    private let locationStore: LocationStore
 
     init() {
         let owner = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
@@ -87,9 +108,18 @@ private struct SignalLifecyclePreview: View {
             userID: owner
         )
         vehicleStore = VehicleStore(repository: PreviewVehicleRepository(vehicle: vehicle), userID: owner)
+        zoneStore = ParkingZoneStore(repository: PreviewZoneRepository())
+        locationStore = LocationStore(provider: PreviewLocationProvider())
     }
 
-    var body: some View { SignalListView(store: store, vehicleStore: vehicleStore) }
+    var body: some View {
+        SignalListView(
+            store: store,
+            vehicleStore: vehicleStore,
+            zoneStore: zoneStore,
+            locationStore: locationStore
+        )
+    }
 
     private static let kiaSnapshot = VehicleSnapshot(
         nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,

@@ -32,8 +32,10 @@ final class SignalStoreTests: XCTestCase {
             let store = SignalStore(repository: repository, userID: owner)
 
             let published = await store.publish(
-                campus: .campusB, zone: "B2", minutes: minutes,
-                ownerVehicleID: repository.vehicleID, now: now
+                zone: .campusAStudent, minutes: minutes,
+                ownerVehicleID: repository.vehicleID,
+                location: insideLocation,
+                now: now
             )
             XCTAssertTrue(published)
             let row = try! XCTUnwrap(repository.inserted)
@@ -52,7 +54,8 @@ final class SignalStoreTests: XCTestCase {
         let ownerRepository = TestRepository(backend: backend, userID: owner)
         let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
         let publishedWithoutVehicle = await ownerStore.publish(
-            campus: .campusA, zone: "A1", minutes: 2, ownerVehicleID: nil, now: now
+            zone: .campusAStudent, minutes: 2, ownerVehicleID: nil,
+            location: insideLocation, now: now
         )
         XCTAssertFalse(publishedWithoutVehicle)
         XCTAssertNil(ownerRepository.inserted)
@@ -76,19 +79,26 @@ final class SignalStoreTests: XCTestCase {
         let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
 
         do {
-            _ = try await ownerRepository.publish(
-                signal(owner: owner), ownerVehicleID: claimantRepository.vehicleID
-            )
+            _ = try await ownerRepository.publish(PublishParkingSignalRequest(
+                signal: signal(owner: owner),
+                zoneID: ParkingZone.campusAStudent.id,
+                ownerVehicleID: claimantRepository.vehicleID,
+                location: insideLocation
+            ))
             XCTFail("Publishing with a foreign vehicle ID should fail")
         } catch {
             XCTAssertEqual(error as? ParkingSignalRepositoryError, .vehicleUnavailable)
         }
 
         let published = await ownerStore.publish(
-            campus: .campusA, zone: "A1", minutes: 2,
-            ownerVehicleID: ownerRepository.vehicleID, now: now
+            zone: .campusAStudent, minutes: 2,
+            ownerVehicleID: ownerRepository.vehicleID,
+            location: insideLocation,
+            now: now
         )
         XCTAssertTrue(published)
+        XCTAssertEqual(ownerRepository.publishedRequest?.zoneID, "campus_a_student")
+        XCTAssertEqual(ownerRepository.publishedRequest?.location, insideLocation)
         let signal = try XCTUnwrap(ownerRepository.inserted)
         let publishedSnapshot = try XCTUnwrap(backend.handoverDetails[signal.id]?.ownerVehicle)
         XCTAssertEqual(publishedSnapshot.description, "Midnight grey Kia K5 Sedan · Plate ending 404")
@@ -417,6 +427,15 @@ final class SignalStoreTests: XCTestCase {
         )
     }
 
+    private var insideLocation: LocationReading {
+        LocationReading(
+            latitude: 26.164736,
+            longitude: 50.543676,
+            horizontalAccuracy: 8,
+            timestamp: now
+        )
+    }
+
     private func handover(signalID: UUID) -> HandoverDetails {
         HandoverDetails(
             signalID: signalID, passColor: .purple, symbolName: "hare.fill",
@@ -528,7 +547,8 @@ private final class TestLifecycleBackend {
 
     private func copy(_ row: ParkingSignal, status: ParkingSignal.Status, claimant: UUID?) -> ParkingSignal {
         ParkingSignal(
-            id: row.id, createdBy: row.createdBy, campus: row.campus, zone: row.zone,
+            id: row.id, createdBy: row.createdBy, zoneID: row.zoneID,
+            campus: row.campus, zone: row.zone,
             leavingAt: row.leavingAt, expiresAt: row.expiresAt, status: status,
             createdAt: row.createdAt, claimedBy: claimant,
             claimedAt: claimant == nil ? nil : (row.claimedAt ?? now)
@@ -547,6 +567,7 @@ private final class TestRepository: ParkingSignalRepository {
     let userID: UUID
     let vehicleID: UUID
     var inserted: ParkingSignal?
+    var publishedRequest: PublishParkingSignalRequest?
     var callCounts: [ParkingSignal.LifecycleAction: Int] = [:]
     var suspendedAction: ParkingSignal.LifecycleAction?
     var simulateLeakyPrivateQuery = false
@@ -580,9 +601,14 @@ private final class TestRepository: ParkingSignalRepository {
         return SignalFeed(signals: rows, handoverDetails: details)
     }
 
-    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal {
-        inserted = signal
-        return try backend.publish(signal, userID: userID, vehicleID: ownerVehicleID)
+    func publish(_ request: PublishParkingSignalRequest) async throws -> ParkingSignal {
+        publishedRequest = request
+        inserted = request.signal
+        return try backend.publish(
+            request.signal,
+            userID: userID,
+            vehicleID: request.ownerVehicleID
+        )
     }
 
     func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal {
