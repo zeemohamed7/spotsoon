@@ -3,9 +3,15 @@ import Supabase
 
 @MainActor
 protocol ParkingSignalRepository {
-    func fetchActive(now: Date) async throws -> [ParkingSignal]
-    func insert(_ signal: ParkingSignal) async throws
-    func claim(signalID: UUID) async throws -> ParkingSignal
+    func fetchFeed(now: Date) async throws -> SignalFeed
+    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal
+    func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal
+    func markArrived(signalID: UUID) async throws -> ParkingSignal
+    func releaseClaim(signalID: UUID) async throws -> ParkingSignal
+    func cancel(signalID: UUID) async throws -> ParkingSignal
+    func markVacated(signalID: UUID) async throws -> ParkingSignal
+    func complete(signalID: UUID) async throws -> ParkingSignal
+    func markUnavailable(signalID: UUID) async throws -> ParkingSignal
     func observe(_ receive: @escaping @MainActor (SignalEvent) async -> Void) async throws
 }
 
@@ -13,12 +19,19 @@ enum SignalEvent { case changed, connected, disconnected }
 
 enum ParkingSignalRepositoryError: LocalizedError, Equatable {
     case signalUnavailable
-    case invalidClaimResponse
+    case transitionUnavailable
+    case vehicleUnavailable
+    case databaseSetupRequired
+    case invalidSignalResponse
 
     var errorDescription: String? {
         switch self {
         case .signalUnavailable: "This signal was already claimed or is no longer available."
-        case .invalidClaimResponse: "The server returned an invalid parking signal."
+        case .transitionUnavailable: "This action is no longer available. Refresh to see the latest signal."
+        case .vehicleUnavailable: "Select a saved vehicle that belongs to this account."
+        case .databaseSetupRequired:
+            "Supabase database update required. Run migration 202609240001_add_garage_and_vehicle_snapshots.sql, then restart SpotSoon."
+        case .invalidSignalResponse: "The server returned an invalid parking signal."
         }
     }
 }
@@ -28,34 +41,112 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
     private let client: SupabaseClient
     init(client: SupabaseClient) { self.client = client }
 
-    func fetchActive(now: Date) async throws -> [ParkingSignal] {
-        try await client.from("parking_signals").select()
-            .in("status", values: ["active", "claimed"])
-            .gt("expires_at", value: now.ISO8601Format())
-            .order("leaving_at", ascending: true).execute().value
-    }
-
-    func insert(_ signal: ParkingSignal) async throws {
-        try await client.from("parking_signals").insert(signal).execute()
-    }
-
-    func claim(signalID: UUID) async throws -> ParkingSignal {
+    func fetchFeed(now: Date) async throws -> SignalFeed {
         do {
-            let response: ClaimResponse = try await client
-                .rpc("claim_parking_signal", params: ClaimParameters(pSignalID: signalID))
+            try await client.rpc("expire_parking_signals").execute()
+            let signals: [ParkingSignal] = try await client.from("parking_signals").select()
+                .in("status", values: ["active", "claimed", "arrived", "vacated"])
+                .gt("expires_at", value: now.ISO8601Format())
+                .order("leaving_at", ascending: true).execute().value
+            let details: [HandoverDetails] = try await client
+                .from("parking_signal_handovers")
+                .select()
+                .execute()
+                .value
+            return SignalFeed(
+                signals: signals,
+                handoverDetails: Dictionary(uniqueKeysWithValues: details.map { ($0.signalID, $0) })
+            )
+        } catch let error as PostgrestError {
+            throw translated(error)
+        }
+    }
+
+    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal {
+        do {
+            let response: SignalResponse = try await client
+                .rpc("publish_parking_signal", params: PublishParameters(
+                    signal: signal,
+                    ownerVehicleID: ownerVehicleID
+                ))
                 .execute()
                 .value
             return response.signal
         } catch let error as PostgrestError {
-            let diagnostic = [error.code, error.message, error.details, error.hint]
-                .compactMap { $0 }
-                .joined(separator: " ")
-                .lowercased()
-            if diagnostic.contains("signal_unavailable") {
-                throw ParkingSignalRepositoryError.signalUnavailable
-            }
-            throw error
+            throw translated(error)
         }
+    }
+
+    func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal {
+        do {
+            let response: SignalResponse = try await client
+                .rpc("claim_parking_signal", params: ClaimParameters(
+                    pSignalID: signalID,
+                    claimantVehicleID: claimantVehicleID
+                ))
+                .execute()
+                .value
+            return response.signal
+        } catch let error as PostgrestError {
+            throw translated(error)
+        }
+    }
+
+    func markArrived(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("arrive_at_parking_signal", signalID: signalID)
+    }
+
+    func releaseClaim(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("release_parking_signal", signalID: signalID)
+    }
+
+    func cancel(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("cancel_parking_signal", signalID: signalID)
+    }
+
+    func markVacated(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("vacate_parking_signal", signalID: signalID)
+    }
+
+    func complete(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("complete_parking_signal", signalID: signalID)
+    }
+
+    func markUnavailable(signalID: UUID) async throws -> ParkingSignal {
+        try await callLifecycleRPC("mark_parking_signal_unavailable", signalID: signalID)
+    }
+
+    private func callLifecycleRPC(_ name: String, signalID: UUID) async throws -> ParkingSignal {
+        do {
+            let response: SignalResponse = try await client
+                .rpc(name, params: SignalIDParameters(pSignalID: signalID))
+                .execute()
+                .value
+            return response.signal
+        } catch let error as PostgrestError {
+            throw translated(error)
+        }
+    }
+
+    private func translated(_ error: PostgrestError) -> any Error {
+        let diagnostic = [error.code, error.message, error.details, error.hint]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+        if diagnostic.contains("signal_unavailable") {
+            return ParkingSignalRepositoryError.signalUnavailable
+        }
+        if diagnostic.contains("transition_unavailable") {
+            return ParkingSignalRepositoryError.transitionUnavailable
+        }
+        if diagnostic.contains("vehicle_unavailable") {
+            return ParkingSignalRepositoryError.vehicleUnavailable
+        }
+        if diagnostic.contains("pgrst202")
+            || diagnostic.contains("expire_parking_signals") {
+            return ParkingSignalRepositoryError.databaseSetupRequired
+        }
+        return error
     }
 
     // The store owns one observation task. Cancellation tears down both streams and the channel.
@@ -105,7 +196,41 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
     }
 }
 
+private struct PublishParameters: Encodable {
+    let campus: String
+    let zone: String
+    let leavingAt: Date
+    let expiresAt: Date
+    let ownerVehicleID: UUID
+
+    init(signal: ParkingSignal, ownerVehicleID: UUID) {
+        campus = signal.campus.rawValue
+        zone = signal.zone
+        leavingAt = signal.leavingAt
+        expiresAt = signal.expiresAt
+        self.ownerVehicleID = ownerVehicleID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case campus = "p_campus"
+        case zone = "p_zone"
+        case leavingAt = "p_leaving_at"
+        case expiresAt = "p_expires_at"
+        case ownerVehicleID = "p_owner_vehicle_id"
+    }
+}
+
 private struct ClaimParameters: Encodable {
+    let pSignalID: UUID
+    let claimantVehicleID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case pSignalID = "p_signal_id"
+        case claimantVehicleID = "p_claimant_vehicle_id"
+    }
+}
+
+private struct SignalIDParameters: Encodable {
     let pSignalID: UUID
 
     enum CodingKeys: String, CodingKey {
@@ -113,7 +238,7 @@ private struct ClaimParameters: Encodable {
     }
 }
 
-private struct ClaimResponse: Decodable {
+private struct SignalResponse: Decodable {
     let signal: ParkingSignal
 
     init(from decoder: Decoder) throws {
@@ -124,7 +249,7 @@ private struct ClaimResponse: Decodable {
         }
         let signals = try container.decode([ParkingSignal].self)
         guard signals.count == 1, let signal = signals.first else {
-            throw ParkingSignalRepositoryError.invalidClaimResponse
+            throw ParkingSignalRepositoryError.invalidSignalResponse
         }
         self.signal = signal
     }

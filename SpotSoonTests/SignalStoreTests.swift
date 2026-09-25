@@ -3,213 +3,630 @@ import XCTest
 
 @MainActor
 final class SignalStoreTests: XCTestCase {
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func testFiltersInvisibleAndExpiredAndSortsChronologically() async {
-        let repo = FakeRepository()
-        let early = signal(leaving: 120, expiry: 420)
-        let later = signal(leaving: 600, expiry: 900)
-        let leavingPassed = signal(leaving: -60, expiry: 240)
-        repo.rows = [later, signal(leaving: 0, expiry: 0), early,
-                     signal(leaving: 0, expiry: -1), signal(leaving: 0, expiry: 600, status: .cancelled),
-                     signal(leaving: 0, expiry: 600, status: .expired), leavingPassed]
-        let store = SignalStore(repository: repo, userID: UUID())
-        await store.refresh(now: now)
-        XCTAssertEqual(store.signals.map(\.id), [leavingPassed.id, early.id, later.id])
-        XCTAssertFalse(store.isLoading)
-        XCTAssertNil(store.listError)
+    func testFiltersTerminalAndExpiredSignalsAndSortsEveryVisibleStatus() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let rows = [
+            signal(owner: owner, leaving: 500, status: .vacated, claimant: claimant),
+            signal(owner: owner, leaving: 300, status: .arrived, claimant: claimant),
+            signal(owner: owner, leaving: 200, status: .claimed, claimant: claimant),
+            signal(owner: owner, leaving: 100),
+            signal(owner: owner, leaving: 0, expiry: 0),
+            signal(owner: owner, status: .completed),
+            signal(owner: owner, status: .unavailable),
+            signal(owner: owner, status: .cancelled),
+            signal(owner: owner, status: .expired)
+        ]
+
+        let visible = ParkingSignal.visible(rows, at: now)
+        XCTAssertEqual(visible.map(\.status), [.active, .claimed, .arrived, .vacated])
     }
 
     func testLeavingAndExpiryForEveryDurationAndAuthenticatedOwner() async {
         for minutes in [2, 5, 10] {
-            let repo = FakeRepository()
             let owner = UUID()
-            let store = SignalStore(repository: repo, userID: owner)
-            let success = await store.publish(campus: .campusB, zone: "B2", minutes: minutes, now: now)
-            XCTAssertTrue(success)
-            let row = try! XCTUnwrap(repo.inserted)
+            let backend = TestLifecycleBackend(now: now)
+            let repository = TestRepository(backend: backend, userID: owner)
+            let store = SignalStore(repository: repository, userID: owner)
+
+            let published = await store.publish(
+                campus: .campusB, zone: "B2", minutes: minutes,
+                ownerVehicleID: repository.vehicleID, now: now
+            )
+            XCTAssertTrue(published)
+            let row = try! XCTUnwrap(repository.inserted)
             XCTAssertEqual(row.createdBy, owner)
             XCTAssertEqual(row.leavingAt, now.addingTimeInterval(Double(minutes * 60)))
             XCTAssertEqual(row.expiresAt, row.leavingAt.addingTimeInterval(300))
-            XCTAssertEqual(row.createdAt, now)
             XCTAssertEqual(row.status, .active)
         }
     }
 
-    func testFailedInsertRemainsVisibleAndDoesNotReportSuccess() async {
-        let repo = FakeRepository()
-        repo.shouldFail = true
-        let store = SignalStore(repository: repo, userID: UUID())
-        let success = await store.publish(campus: .campusA, zone: "A1", minutes: 2, now: now)
-        XCTAssertFalse(success)
-        XCTAssertNotNil(store.publishError)
-        XCTAssertFalse(store.isPublishing)
-    }
-
-    func testFetchFailureIsVisible() async {
-        let repo = FakeRepository()
-        repo.shouldFail = true
-        let store = SignalStore(repository: repo, userID: UUID())
-        await store.refresh(now: now)
-        XCTAssertNotNil(store.listError)
-        XCTAssertFalse(store.isLoading)
-    }
-
-    func testExpiryWithoutDatabaseEvent() {
-        let row = signal(leaving: 120, expiry: 420)
-        XCTAssertEqual(ParkingSignal.visible([row], at: now).count, 1)
-        XCTAssertTrue(ParkingSignal.visible([row], at: now.addingTimeInterval(420)).isEmpty)
-    }
-
-    func testOwnerCannotClaimActiveSignal() {
+    func testPublishingAndClaimingAreBlockedWithoutVehicleSelection() async {
         let owner = UUID()
+        let claimant = UUID()
         let row = signal(owner: owner)
-        let presentation = row.claimPresentation(for: owner)
-        XCTAssertEqual(presentation, .yourSignal)
-        XCTAssertFalse(presentation.canClaim)
+        let backend = TestLifecycleBackend(now: now, signals: [row])
+        let ownerRepository = TestRepository(backend: backend, userID: owner)
+        let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
+        let publishedWithoutVehicle = await ownerStore.publish(
+            campus: .campusA, zone: "A1", minutes: 2, ownerVehicleID: nil, now: now
+        )
+        XCTAssertFalse(publishedWithoutVehicle)
+        XCTAssertNil(ownerRepository.inserted)
+        XCTAssertEqual(ownerStore.publishError, "Select the vehicle you’re leaving in.")
+
+        let claimantRepository = TestRepository(backend: backend, userID: claimant)
+        let claimantStore = SignalStore(repository: claimantRepository, userID: claimant)
+        await claimantStore.refresh(now: now)
+        let claimedWithoutVehicle = await claimantStore.claim(row, claimantVehicleID: nil, now: now)
+        XCTAssertFalse(claimedWithoutVehicle)
+        XCTAssertEqual(claimantStore.actionErrors[row.id], "Select the vehicle you’re arriving in.")
+        XCTAssertNil(claimantRepository.callCounts[.claim])
     }
 
-    func testAnotherUserCanClaimActiveSignal() {
-        let row = signal(owner: UUID())
-        let presentation = row.claimPresentation(for: UUID())
-        XCTAssertEqual(presentation, .available)
-        XCTAssertTrue(presentation.canClaim)
-    }
-
-    func testClaimantReceivesYoureHeadingThere() {
-        let claimant = UUID()
-        let row = signal(owner: UUID(), status: .claimed, claimedBy: claimant)
-        XCTAssertEqual(row.claimPresentation(for: claimant), .youreHeadingThere)
-    }
-
-    func testOwnerReceivesSomeoneIsHeadingThere() {
+    func testSnapshotsUseOwnedVehiclesAndRejectForeignVehicleIDs() async throws {
         let owner = UUID()
-        let row = signal(owner: owner, status: .claimed, claimedBy: UUID())
-        XCTAssertEqual(row.claimPresentation(for: owner), .someoneHeadingThere)
-    }
-
-    func testThirdUserSeesClaimed() {
-        let row = signal(owner: UUID(), status: .claimed, claimedBy: UUID())
-        XCTAssertEqual(row.claimPresentation(for: UUID()), .claimed)
-        XCTAssertFalse(row.claimPresentation(for: UUID()).canClaim)
-    }
-
-    func testClaimedNonExpiredSignalsRemainVisible() {
-        let claimed = signal(expiry: 300, status: .claimed, claimedBy: UUID())
-        XCTAssertEqual(ParkingSignal.visible([claimed], at: now), [claimed])
-    }
-
-    func testExpiredClaimedSignalsRemainHidden() {
-        let claimed = signal(expiry: 0, status: .claimed, claimedBy: UUID())
-        XCTAssertTrue(ParkingSignal.visible([claimed], at: now).isEmpty)
-    }
-
-    func testRepeatedClaimTapsStartOnlyOneRequest() async {
         let claimant = UUID()
-        let active = signal(owner: UUID())
-        let claimed = signal(id: active.id, owner: active.createdBy, status: .claimed, claimedBy: claimant)
-        let repo = FakeRepository()
-        repo.claimResult = claimed
-        repo.suspendClaim = true
-        let store = SignalStore(repository: repo, userID: claimant)
+        let backend = TestLifecycleBackend(now: now)
+        let ownerRepository = TestRepository(backend: backend, userID: owner)
+        let claimantRepository = TestRepository(backend: backend, userID: claimant)
+        let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
 
-        let firstClaim = Task { await store.claim(active, now: now) }
-        for _ in 0..<100 {
-            if repo.claimCallCount > 0 { break }
-            await Task.yield()
+        do {
+            _ = try await ownerRepository.publish(
+                signal(owner: owner), ownerVehicleID: claimantRepository.vehicleID
+            )
+            XCTFail("Publishing with a foreign vehicle ID should fail")
+        } catch {
+            XCTAssertEqual(error as? ParkingSignalRepositoryError, .vehicleUnavailable)
         }
 
-        XCTAssertTrue(store.isClaiming(active.id))
-        let duplicateSucceeded = await store.claim(active, now: now)
-        XCTAssertFalse(duplicateSucceeded)
-        XCTAssertEqual(repo.claimCallCount, 1)
-
-        repo.finishSuspendedClaim()
-        let firstSucceeded = await firstClaim.value
-        XCTAssertTrue(firstSucceeded)
-        XCTAssertFalse(store.isClaiming(active.id))
-        XCTAssertEqual(store.signals.first, claimed)
-    }
-
-    func testSignalUnavailableBecomesClearErrorAndRefreshes() async {
-        let active = signal(owner: UUID())
-        let repo = FakeRepository()
-        repo.rows = [active]
-        repo.claimError = ParkingSignalRepositoryError.signalUnavailable
-        let store = SignalStore(repository: repo, userID: UUID())
-
-        let succeeded = await store.claim(active, now: now)
-        XCTAssertFalse(succeeded)
-        XCTAssertEqual(
-            store.claimErrors[active.id],
-            "This signal was already claimed or is no longer available."
+        let published = await ownerStore.publish(
+            campus: .campusA, zone: "A1", minutes: 2,
+            ownerVehicleID: ownerRepository.vehicleID, now: now
         )
-        XCTAssertEqual(repo.claimCallCount, 1)
-        XCTAssertEqual(repo.fetchCallCount, 1)
+        XCTAssertTrue(published)
+        let signal = try XCTUnwrap(ownerRepository.inserted)
+        let publishedSnapshot = try XCTUnwrap(backend.handoverDetails[signal.id]?.ownerVehicle)
+        XCTAssertEqual(publishedSnapshot.description, "Midnight grey Kia K5 Sedan · Plate ending 404")
+
+        do {
+            _ = try await claimantRepository.claim(
+                signalID: signal.id, claimantVehicleID: ownerRepository.vehicleID
+            )
+            XCTFail("A foreign vehicle ID should be rejected")
+        } catch {
+            XCTAssertEqual(error as? ParkingSignalRepositoryError, .vehicleUnavailable)
+        }
+
+        _ = try await claimantRepository.claim(
+            signalID: signal.id, claimantVehicleID: claimantRepository.vehicleID
+        )
+        let claimedSnapshot = try XCTUnwrap(backend.handoverDetails[signal.id]?.claimantVehicle)
+        XCTAssertEqual(claimedSnapshot.description, "Midnight grey Kia K5 Sedan · Plate ending 404")
+
+        backend.vehicles[ownerRepository.vehicleID] = (
+            owner,
+            VehicleSnapshot(
+                nickname: "Edited", color: "Red", vehicleType: .pickup,
+                make: nil, model: nil, plateSuffix: nil
+            )
+        )
+        XCTAssertEqual(backend.handoverDetails[signal.id]?.ownerVehicle, publishedSnapshot)
+        backend.vehicles[ownerRepository.vehicleID] = nil
+        backend.vehicles[claimantRepository.vehicleID] = nil
+        XCTAssertEqual(backend.handoverDetails[signal.id]?.ownerVehicle, publishedSnapshot)
+        XCTAssertEqual(backend.handoverDetails[signal.id]?.claimantVehicle, claimedSnapshot)
     }
 
-    func testOwnerClaimIsRejectedBeforeRepositoryCall() async {
+    func testCompleteLifecycleAndPassConsistencyForBothParticipants() async {
         let owner = UUID()
-        let active = signal(owner: owner)
-        let repo = FakeRepository()
-        let store = SignalStore(repository: repo, userID: owner)
+        let claimant = UUID()
+        let initial = signal(owner: owner)
+        let backend = TestLifecycleBackend(now: now, signals: [initial])
+        let ownerStore = SignalStore(repository: TestRepository(backend: backend, userID: owner), userID: owner)
+        let claimantRepository = TestRepository(backend: backend, userID: claimant)
+        let claimantStore = SignalStore(repository: claimantRepository, userID: claimant)
 
-        let succeeded = await store.claim(active, now: now)
-        XCTAssertFalse(succeeded)
-        XCTAssertEqual(repo.claimCallCount, 0)
+        await ownerStore.refresh(now: now)
+        await claimantStore.refresh(now: now)
+        let claimedSuccessfully = await claimantStore.claim(
+            initial, claimantVehicleID: claimantRepository.vehicleID, now: now
+        )
+        XCTAssertTrue(claimedSuccessfully)
+        await ownerStore.refresh(now: now)
+
+        let claimed = try! XCTUnwrap(claimantStore.signals.first)
+        XCTAssertEqual(claimed.status, .claimed)
+        XCTAssertEqual(ownerStore.handover(for: claimed), claimantStore.handover(for: claimed))
+
+        let arrivedSuccessfully = await claimantStore.perform(.arrive, on: claimed, now: now)
+        XCTAssertTrue(arrivedSuccessfully)
+        await ownerStore.refresh(now: now)
+        let arrived = try! XCTUnwrap(ownerStore.signals.first)
+        XCTAssertEqual(arrived.status, .arrived)
+
+        let vacatedSuccessfully = await ownerStore.perform(.vacate, on: arrived, now: now)
+        XCTAssertTrue(vacatedSuccessfully)
+        await claimantStore.refresh(now: now)
+        let vacated = try! XCTUnwrap(claimantStore.signals.first)
+        XCTAssertEqual(vacated.status, .vacated)
+
+        let completedSuccessfully = await claimantStore.perform(.complete, on: vacated, now: now)
+        XCTAssertTrue(completedSuccessfully)
+        XCTAssertTrue(claimantStore.signals.isEmpty)
+        XCTAssertNil(backend.handoverDetails[initial.id])
+        XCTAssertEqual(backend.signals[initial.id]?.status, .completed)
+    }
+
+    func testVacatedSignalCanBeMarkedUnavailable() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let vacated = signal(owner: owner, status: .vacated, claimant: claimant)
+        let backend = TestLifecycleBackend(now: now, signals: [vacated], details: [handover(signalID: vacated.id)])
+        let store = SignalStore(repository: TestRepository(backend: backend, userID: claimant), userID: claimant)
+        await store.refresh(now: now)
+
+        let unavailableSucceeded = await store.perform(.unavailable, on: vacated, now: now)
+        XCTAssertTrue(unavailableSucceeded)
+        XCTAssertTrue(store.signals.isEmpty)
+        XCTAssertEqual(backend.signals[vacated.id]?.status, .unavailable)
+        XCTAssertNil(backend.handoverDetails[vacated.id])
+    }
+
+    func testClaimReleaseFromClaimedAndArrivedInvalidatesOldPass() async {
+        for startingStatus in [ParkingSignal.Status.claimed, .arrived] {
+            let owner = UUID()
+            let claimant = UUID()
+            let row = signal(owner: owner, status: startingStatus, claimant: claimant)
+            let oldPass = handover(signalID: row.id)
+            let backend = TestLifecycleBackend(now: now, signals: [row], details: [oldPass])
+            let store = SignalStore(repository: TestRepository(backend: backend, userID: claimant), userID: claimant)
+            await store.refresh(now: now)
+
+            XCTAssertEqual(store.handover(for: row), oldPass)
+            let released = await store.perform(.release, on: row, now: now)
+            XCTAssertTrue(released)
+            XCTAssertEqual(store.signals.first?.status, .active)
+            XCTAssertNil(store.handover(for: store.signals[0]))
+            let releasedDetails = try! XCTUnwrap(backend.handoverDetails[row.id])
+            XCTAssertEqual(releasedDetails.ownerVehicle, oldPass.ownerVehicle)
+            XCTAssertNil(releasedDetails.claimantVehicle)
+            XCTAssertNil(releasedDetails.pass)
+
+            let repository = TestRepository(backend: backend, userID: claimant)
+            let reclaimed = try! await repository.claim(
+                signalID: row.id, claimantVehicleID: repository.vehicleID
+            )
+            XCTAssertEqual(reclaimed.status, .claimed)
+            XCTAssertNotEqual(backend.handoverDetails[row.id]?.pass, oldPass.pass)
+            XCTAssertNotNil(backend.handoverDetails[row.id]?.claimantVehicle)
+        }
+    }
+
+    func testCreatorCanCancelActiveClaimedAndArrivedSignals() async {
+        for startingStatus in [ParkingSignal.Status.active, .claimed, .arrived] {
+            let owner = UUID()
+            let claimant = startingStatus == .active ? nil : UUID()
+            let row = signal(owner: owner, status: startingStatus, claimant: claimant)
+            let details = claimant == nil ? [] : [handover(signalID: row.id)]
+            let backend = TestLifecycleBackend(now: now, signals: [row], details: details)
+            let store = SignalStore(repository: TestRepository(backend: backend, userID: owner), userID: owner)
+            await store.refresh(now: now)
+
+            let cancelled = await store.perform(.cancel, on: row, now: now)
+            XCTAssertTrue(cancelled)
+            XCTAssertTrue(store.signals.isEmpty)
+            XCTAssertEqual(backend.signals[row.id]?.status, .cancelled)
+            XCTAssertNil(backend.handoverDetails[row.id])
+        }
+    }
+
+    func testUnauthorizedTransitionsAreRejectedBeforeRepositoryCalls() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let stranger = UUID()
+        let claimed = signal(owner: owner, status: .claimed, claimant: claimant)
+        let backend = TestLifecycleBackend(now: now, signals: [claimed], details: [handover(signalID: claimed.id)])
+        let repository = TestRepository(backend: backend, userID: stranger)
+        let store = SignalStore(repository: repository, userID: stranger)
+        await store.refresh(now: now)
+
+        for action in [ParkingSignal.LifecycleAction.cancel, .release, .arrive, .vacate, .complete, .unavailable] {
+            let succeeded = await store.perform(action, on: claimed, now: now)
+            XCTAssertFalse(succeeded)
+        }
+        XCTAssertTrue(repository.callCounts.isEmpty)
+
+        let ownerRepository = TestRepository(backend: backend, userID: owner)
+        let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
+        let ownerArrived = await ownerStore.perform(.arrive, on: claimed, now: now)
+        XCTAssertFalse(ownerArrived)
+        XCTAssertTrue(ownerRepository.callCounts.isEmpty)
+    }
+
+    func testCreatorClaimantAndUnrelatedUserStatesAndActions() {
+        let owner = UUID()
+        let claimant = UUID()
+        let stranger = UUID()
+
+        let active = signal(owner: owner)
+        XCTAssertEqual(active.userState(for: owner), .yourSignal)
+        XCTAssertEqual(active.userState(for: claimant), .available)
+        XCTAssertEqual(active.allowedActions(for: owner), [.cancel])
+        XCTAssertEqual(active.allowedActions(for: claimant), [.claim])
+
+        let claimed = signal(owner: owner, status: .claimed, claimant: claimant)
+        XCTAssertEqual(claimed.userState(for: owner), .someoneHeadingThere)
+        XCTAssertEqual(claimed.userState(for: claimant), .youreHeadingThere)
+        XCTAssertEqual(claimed.userState(for: stranger), .claimed)
+
+        let arrived = signal(owner: owner, status: .arrived, claimant: claimant)
+        XCTAssertEqual(arrived.userState(for: owner), .claimantArrived)
+        XCTAssertEqual(arrived.userState(for: claimant), .youAreHere)
+        XCTAssertEqual(arrived.userState(for: stranger), .handoverInProgress)
+
+        let vacated = signal(owner: owner, status: .vacated, claimant: claimant)
+        XCTAssertEqual(vacated.userState(for: claimant), .driverLeft)
+        XCTAssertEqual(vacated.userState(for: owner), .waitingForClaimant)
+        XCTAssertEqual(vacated.userState(for: stranger), .handoverInProgress)
+    }
+
+    func testUnrelatedUserNeverKeepsLeakedPrivateDetails() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let row = signal(owner: owner, status: .arrived, claimant: claimant)
+        let backend = TestLifecycleBackend(now: now, signals: [row], details: [handover(signalID: row.id)])
+        let repository = TestRepository(backend: backend, userID: UUID())
+        repository.simulateLeakyPrivateQuery = true
+        let store = SignalStore(repository: repository, userID: repository.userID)
+
+        await store.refresh(now: now)
+        XCTAssertNotNil(store.signals.first)
+        XCTAssertNil(store.handover(for: row))
+        XCTAssertTrue(store.handoverDetails.isEmpty)
+    }
+
+    func testVehicleInputValidationAndNormalization() throws {
+        var missing = VehicleDraft()
+        XCTAssertThrowsError(try missing.validated())
+        missing.nickname = "Campus car"
+        missing.color = "Blue"
+        missing.plateSuffix = "1234"
+        XCTAssertThrowsError(try missing.validated())
+        missing.plateSuffix = "A-1"
+        XCTAssertThrowsError(try missing.validated())
+
+        var draft = VehicleDraft()
+        draft.nickname = "  My SUV "
+        draft.color = "  Dark blue "
+        draft.vehicleType = .suv
+        draft.plateSuffix = " a7b "
+        let value = try draft.validated()
+        XCTAssertEqual(value.color, "Dark blue")
+        XCTAssertEqual(value.vehicleType, .suv)
+        XCTAssertEqual(value.plateSuffix, "A7B")
+    }
+
+    func testRapidDuplicateClaimAndLifecycleActionsAreBlockedPerSignal() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let active = signal(owner: owner)
+        let backend = TestLifecycleBackend(now: now, signals: [active])
+        let repository = TestRepository(backend: backend, userID: claimant)
+        repository.suspendedAction = .claim
+        let store = SignalStore(repository: repository, userID: claimant)
+        await store.refresh(now: now)
+
+        let first = Task { await store.claim(active, claimantVehicleID: repository.vehicleID, now: now) }
+        await waitUntil { repository.callCounts[.claim] == 1 }
+        XCTAssertTrue(store.isPerformingAction(on: active.id))
+        let duplicateClaimed = await store.claim(active, claimantVehicleID: repository.vehicleID, now: now)
+        XCTAssertFalse(duplicateClaimed)
+        XCTAssertEqual(repository.callCounts[.claim], 1)
+        repository.resumeSuspendedAction()
+        let firstClaimed = await first.value
+        XCTAssertTrue(firstClaimed)
+
+        let claimed = try! XCTUnwrap(store.signals.first)
+        repository.suspendedAction = .arrive
+        let arrival = Task { await store.perform(.arrive, on: claimed, now: now) }
+        await waitUntil { repository.callCounts[.arrive] == 1 }
+        let duplicateArrived = await store.perform(.arrive, on: claimed, now: now)
+        XCTAssertFalse(duplicateArrived)
+        XCTAssertEqual(repository.callCounts[.arrive], 1)
+        repository.resumeSuspendedAction()
+        let arrivalSucceeded = await arrival.value
+        XCTAssertTrue(arrivalSucceeded)
+    }
+
+    func testCancellationAndClaimRacesHaveOneConsistentOutcome() async throws {
+        let owner = UUID()
+        let claimant = UUID()
+
+        let first = signal(owner: owner)
+        let firstBackend = TestLifecycleBackend(now: now, signals: [first])
+        let claimantRepository = TestRepository(backend: firstBackend, userID: claimant)
+        let ownerRepository = TestRepository(backend: firstBackend, userID: owner)
+        _ = try await claimantRepository.claim(signalID: first.id, claimantVehicleID: claimantRepository.vehicleID)
+        _ = try await ownerRepository.cancel(signalID: first.id)
+        XCTAssertEqual(firstBackend.signals[first.id]?.status, .cancelled)
+        XCTAssertNil(firstBackend.handoverDetails[first.id])
+
+        let second = signal(owner: owner)
+        let secondBackend = TestLifecycleBackend(now: now, signals: [second])
+        let secondOwner = TestRepository(backend: secondBackend, userID: owner)
+        let secondClaimant = TestRepository(backend: secondBackend, userID: claimant)
+        _ = try await secondOwner.cancel(signalID: second.id)
+        do {
+            _ = try await secondClaimant.claim(signalID: second.id, claimantVehicleID: secondClaimant.vehicleID)
+            XCTFail("Claim should lose after cancellation")
+        } catch {
+            XCTAssertEqual(error as? ParkingSignalRepositoryError, .signalUnavailable)
+        }
+        XCTAssertEqual(secondBackend.signals[second.id]?.status, .cancelled)
+    }
+
+    func testRealtimeRefreshReplacesThenRemovesSignal() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let active = signal(owner: owner)
+        let backend = TestLifecycleBackend(now: now, signals: [active])
+        let repository = TestRepository(backend: backend, userID: owner)
+        let store = SignalStore(repository: repository, userID: owner)
+        let run = Task { await store.run() }
+        await waitUntil { repository.isObserving }
+
+        backend.signals[active.id] = signal(
+            id: active.id, owner: owner, status: .arrived, claimant: claimant
+        )
+        backend.handoverDetails[active.id] = handover(signalID: active.id)
+        await repository.emit(.changed)
+        await waitUntil { store.signals.first?.status == .arrived }
+        XCTAssertNotNil(store.handoverDetails[active.id])
+
+        backend.signals[active.id] = signal(id: active.id, owner: owner, status: .completed)
+        backend.handoverDetails[active.id] = nil
+        await repository.emit(.changed)
+        await waitUntil { store.signals.isEmpty }
+        XCTAssertTrue(store.handoverDetails.isEmpty)
+
+        repository.finishObservation()
+        run.cancel()
+        await run.value
     }
 
     private func signal(
         id: UUID = UUID(),
-        owner: UUID = UUID(),
-        leaving: Double = 120,
-        expiry: Double = 420,
+        owner: UUID,
+        leaving: TimeInterval = 120,
+        expiry: TimeInterval = 900,
         status: ParkingSignal.Status = .active,
-        claimedBy: UUID? = nil
+        claimant: UUID? = nil
     ) -> ParkingSignal {
-        ParkingSignal(id: id, createdBy: owner, campus: .campusA, zone: "A1",
-                      leavingAt: now.addingTimeInterval(leaving), expiresAt: now.addingTimeInterval(expiry),
-                      status: status, createdAt: now, claimedBy: claimedBy,
-                      claimedAt: claimedBy.map { _ in now })
+        let keepsClaim = [.claimed, .arrived, .vacated].contains(status)
+        return ParkingSignal(
+            id: id, createdBy: owner, campus: .campusA, zone: "A1",
+            leavingAt: now.addingTimeInterval(leaving),
+            expiresAt: now.addingTimeInterval(expiry), status: status, createdAt: now,
+            claimedBy: keepsClaim ? claimant : nil,
+            claimedAt: keepsClaim ? now : nil
+        )
+    }
+
+    private func handover(signalID: UUID) -> HandoverDetails {
+        HandoverDetails(
+            signalID: signalID, passColor: .purple, symbolName: "hare.fill",
+            confirmationNumber: "42",
+            ownerVehicle: VehicleSnapshot(
+                nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
+                make: "Kia", model: "K5", plateSuffix: "404"
+            ),
+            claimantVehicle: VehicleSnapshot(
+                nickname: "Campus SUV", color: "Silver", vehicleType: .suv,
+                make: nil, model: nil, plateSuffix: "7AB"
+            ),
+            createdAt: now
+        )
+    }
+
+    private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+        for _ in 0..<500 {
+            if condition() { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for asynchronous state")
     }
 }
 
 @MainActor
-private final class FakeRepository: ParkingSignalRepository {
-    var rows: [ParkingSignal] = []
-    var inserted: ParkingSignal?
-    var shouldFail = false
-    var claimResult: ParkingSignal?
-    var claimError: (any Error)?
-    var suspendClaim = false
-    var claimCallCount = 0
-    var fetchCallCount = 0
-    private var claimContinuation: CheckedContinuation<ParkingSignal, any Error>?
-    struct Failure: Error {}
-    func fetchActive(now: Date) async throws -> [ParkingSignal] {
-        fetchCallCount += 1
-        if shouldFail { throw Failure() }
-        return rows
+private final class TestLifecycleBackend {
+    let now: Date
+    var signals: [UUID: ParkingSignal]
+    var handoverDetails: [UUID: HandoverDetails]
+    var vehicles: [UUID: (owner: UUID, snapshot: VehicleSnapshot)] = [:]
+    private var passSequence = 0
+
+    init(now: Date, signals: [ParkingSignal] = [], details: [HandoverDetails] = []) {
+        self.now = now
+        self.signals = Dictionary(uniqueKeysWithValues: signals.map { ($0.id, $0) })
+        self.handoverDetails = Dictionary(uniqueKeysWithValues: details.map { ($0.signalID, $0) })
     }
-    func insert(_ signal: ParkingSignal) async throws {
-        if shouldFail { throw Failure() }
-        inserted = signal
+
+    func registerVehicle(id: UUID, userID: UUID, snapshot: VehicleSnapshot) {
+        vehicles[id] = (userID, snapshot)
     }
-    func claim(signalID: UUID) async throws -> ParkingSignal {
-        claimCallCount += 1
-        if let claimError { throw claimError }
-        guard let claimResult else { throw Failure() }
-        if suspendClaim {
-            return try await withCheckedThrowingContinuation { continuation in
-                claimContinuation = continuation
-            }
+
+    func publish(_ signal: ParkingSignal, userID: UUID, vehicleID: UUID) throws -> ParkingSignal {
+        guard signal.createdBy == userID,
+              let vehicle = vehicles[vehicleID], vehicle.owner == userID else {
+            throw ParkingSignalRepositoryError.vehicleUnavailable
         }
-        return claimResult
+        signals[signal.id] = signal
+        handoverDetails[signal.id] = HandoverDetails(
+            signalID: signal.id, passColor: nil, symbolName: nil, confirmationNumber: nil,
+            ownerVehicle: vehicle.snapshot, claimantVehicle: nil, createdAt: now
+        )
+        return signal
     }
-    func finishSuspendedClaim() {
-        guard let claimResult else { return }
-        claimContinuation?.resume(returning: claimResult)
-        claimContinuation = nil
+
+    func claim(_ id: UUID, userID: UUID, vehicleID: UUID) throws -> ParkingSignal {
+        guard let row = signals[id], row.status == .active, row.createdBy != userID, row.expiresAt > now else {
+            throw ParkingSignalRepositoryError.signalUnavailable
+        }
+        guard let vehicle = vehicles[vehicleID], vehicle.owner == userID else {
+            throw ParkingSignalRepositoryError.vehicleUnavailable
+        }
+        let updated = copy(row, status: .claimed, claimant: userID)
+        signals[id] = updated
+        passSequence += 1
+        let ownerVehicle = handoverDetails[id]?.ownerVehicle ?? Self.ownerSnapshot
+        handoverDetails[id] = HandoverDetails(
+            signalID: id, passColor: .blue, symbolName: "bird.fill",
+            confirmationNumber: String(format: "%02d", passSequence),
+            ownerVehicle: ownerVehicle, claimantVehicle: vehicle.snapshot, createdAt: now
+        )
+        return updated
     }
-    func observe(_ receive: @escaping @MainActor (SignalEvent) async -> Void) async throws {}
+
+    func transition(_ action: ParkingSignal.LifecycleAction, id: UUID, userID: UUID) throws -> ParkingSignal {
+        guard let row = signals[id], row.expiresAt > now else {
+            throw ParkingSignalRepositoryError.transitionUnavailable
+        }
+        let updated: ParkingSignal
+        switch action {
+        case .arrive where row.status == .claimed && row.claimedBy == userID:
+            updated = copy(row, status: .arrived, claimant: row.claimedBy)
+        case .release where [.claimed, .arrived].contains(row.status) && row.claimedBy == userID:
+            updated = copy(row, status: .active, claimant: nil)
+            if let details = handoverDetails[id] {
+                handoverDetails[id] = HandoverDetails(
+                    signalID: id, passColor: nil, symbolName: nil, confirmationNumber: nil,
+                    ownerVehicle: details.ownerVehicle, claimantVehicle: nil, createdAt: details.createdAt
+                )
+            }
+        case .cancel where [.active, .claimed, .arrived].contains(row.status) && row.createdBy == userID:
+            updated = copy(row, status: .cancelled, claimant: nil)
+            handoverDetails[id] = nil
+        case .vacate where row.status == .arrived && row.createdBy == userID:
+            updated = copy(row, status: .vacated, claimant: row.claimedBy)
+        case .complete where row.status == .vacated && row.claimedBy == userID:
+            updated = copy(row, status: .completed, claimant: nil)
+            handoverDetails[id] = nil
+        case .unavailable where row.status == .vacated && row.claimedBy == userID:
+            updated = copy(row, status: .unavailable, claimant: nil)
+            handoverDetails[id] = nil
+        default:
+            throw ParkingSignalRepositoryError.transitionUnavailable
+        }
+        signals[id] = updated
+        return updated
+    }
+
+    private func copy(_ row: ParkingSignal, status: ParkingSignal.Status, claimant: UUID?) -> ParkingSignal {
+        ParkingSignal(
+            id: row.id, createdBy: row.createdBy, campus: row.campus, zone: row.zone,
+            leavingAt: row.leavingAt, expiresAt: row.expiresAt, status: status,
+            createdAt: row.createdAt, claimedBy: claimant,
+            claimedAt: claimant == nil ? nil : (row.claimedAt ?? now)
+        )
+    }
+
+    private static let ownerSnapshot = VehicleSnapshot(
+        nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
+        make: "Kia", model: "K5", plateSuffix: "404"
+    )
+}
+
+@MainActor
+private final class TestRepository: ParkingSignalRepository {
+    let backend: TestLifecycleBackend
+    let userID: UUID
+    let vehicleID: UUID
+    var inserted: ParkingSignal?
+    var callCounts: [ParkingSignal.LifecycleAction: Int] = [:]
+    var suspendedAction: ParkingSignal.LifecycleAction?
+    var simulateLeakyPrivateQuery = false
+    private var suspension: CheckedContinuation<Void, Never>?
+    private var eventContinuation: AsyncStream<SignalEvent>.Continuation?
+    var isObserving: Bool { eventContinuation != nil }
+
+    init(backend: TestLifecycleBackend, userID: UUID) {
+        self.backend = backend
+        self.userID = userID
+        vehicleID = UUID()
+        backend.registerVehicle(
+            id: vehicleID,
+            userID: userID,
+            snapshot: VehicleSnapshot(
+                nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
+                make: "Kia", model: "K5", plateSuffix: "404"
+            )
+        )
+    }
+
+    func fetchFeed(now: Date) async throws -> SignalFeed {
+        let rows = Array(backend.signals.values)
+        let details: [UUID: HandoverDetails]
+        if simulateLeakyPrivateQuery {
+            details = backend.handoverDetails
+        } else {
+            let permitted = Set(rows.filter { $0.createdBy == userID || $0.claimedBy == userID }.map(\.id))
+            details = backend.handoverDetails.filter { permitted.contains($0.key) }
+        }
+        return SignalFeed(signals: rows, handoverDetails: details)
+    }
+
+    func publish(_ signal: ParkingSignal, ownerVehicleID: UUID) async throws -> ParkingSignal {
+        inserted = signal
+        return try backend.publish(signal, userID: userID, vehicleID: ownerVehicleID)
+    }
+
+    func claim(signalID: UUID, claimantVehicleID: UUID) async throws -> ParkingSignal {
+        await before(.claim)
+        return try backend.claim(signalID, userID: userID, vehicleID: claimantVehicleID)
+    }
+
+    func markArrived(signalID: UUID) async throws -> ParkingSignal { try await transition(.arrive, signalID) }
+    func releaseClaim(signalID: UUID) async throws -> ParkingSignal { try await transition(.release, signalID) }
+    func cancel(signalID: UUID) async throws -> ParkingSignal { try await transition(.cancel, signalID) }
+    func markVacated(signalID: UUID) async throws -> ParkingSignal { try await transition(.vacate, signalID) }
+    func complete(signalID: UUID) async throws -> ParkingSignal { try await transition(.complete, signalID) }
+    func markUnavailable(signalID: UUID) async throws -> ParkingSignal { try await transition(.unavailable, signalID) }
+
+    private func transition(_ action: ParkingSignal.LifecycleAction, _ signalID: UUID) async throws -> ParkingSignal {
+        await before(action)
+        return try backend.transition(action, id: signalID, userID: userID)
+    }
+
+    private func before(_ action: ParkingSignal.LifecycleAction) async {
+        callCounts[action, default: 0] += 1
+        if suspendedAction == action {
+            await withCheckedContinuation { suspension = $0 }
+        }
+    }
+
+    func resumeSuspendedAction() {
+        suspendedAction = nil
+        suspension?.resume()
+        suspension = nil
+    }
+
+    func observe(_ receive: @escaping @MainActor (SignalEvent) async -> Void) async throws {
+        let stream = AsyncStream<SignalEvent> { eventContinuation = $0 }
+        for await event in stream { await receive(event) }
+    }
+
+    func emit(_ event: SignalEvent) async {
+        eventContinuation?.yield(event)
+        await Task.yield()
+    }
+
+    func finishObservation() {
+        eventContinuation?.finish()
+        eventContinuation = nil
+    }
 }

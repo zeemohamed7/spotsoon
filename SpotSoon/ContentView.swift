@@ -2,13 +2,14 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var store: SignalStore?
+    @State private var vehicleStore: VehicleStore?
     @State private var error: String?
     @State private var loading = false
 
     var body: some View {
         Group {
-            if let store {
-                SignalListView(store: store)
+            if let store, let vehicleStore {
+                SignalListView(store: store, vehicleStore: vehicleStore)
             } else {
                 NavigationStack {
                     VStack(spacing: 16) {
@@ -33,6 +34,7 @@ struct ContentView: View {
             let client = try SupabaseClientProvider.makeClient()
             let userID = try await AuthService(client: client).restoreOrSignIn()
             store = SignalStore(repository: SupabaseParkingSignalRepository(client: client), userID: userID)
+            vehicleStore = VehicleStore(repository: SupabaseVehicleRepository(client: client), userID: userID)
         } catch {
             self.error = "Could not start SpotSoon: \(error.localizedDescription)"
         }

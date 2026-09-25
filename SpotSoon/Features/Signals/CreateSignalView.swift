@@ -3,9 +3,11 @@ import SwiftUI
 struct CreateSignalView: View {
     @Environment(\.dismiss) private var dismiss
     let store: SignalStore
+    let vehicleStore: VehicleStore
     @State private var campus = ParkingSignal.Campus.campusA
     @State private var zone = "A1"
     @State private var minutes = 5
+    @State private var selectedVehicleID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -20,6 +22,26 @@ struct CreateSignalView: View {
                 Picker("Leaving in", selection: $minutes) {
                     ForEach([2, 5, 10], id: \.self) { Text("\($0) minutes").tag($0) }
                 }
+                VehiclePickerView(
+                    title: "Vehicle you’re leaving in",
+                    store: vehicleStore,
+                    selectedVehicleID: $selectedVehicleID
+                )
+                Section {
+                    Button("Publish") {
+                        Task {
+                            if await store.publish(
+                                campus: campus,
+                                zone: zone,
+                                minutes: minutes,
+                                ownerVehicleID: selectedVehicleID
+                            ) { dismiss() }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.isPublishing)
+                }
                 if let error = store.publishError { Text(error).foregroundStyle(.red) }
                 if store.isPublishing { ProgressView("Publishing…") }
             }
@@ -32,7 +54,12 @@ struct CreateSignalView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Publish") {
                         Task {
-                            if await store.publish(campus: campus, zone: zone, minutes: minutes) { dismiss() }
+                            if await store.publish(
+                                campus: campus,
+                                zone: zone,
+                                minutes: minutes,
+                                ownerVehicleID: selectedVehicleID
+                            ) { dismiss() }
                         }
                     }.disabled(store.isPublishing)
                 }

@@ -1,6 +1,6 @@
-# SpotSoon technical spike
+# SpotSoon parking handover spike
 
-Native SwiftUI + Supabase Swift 2.55.2. Anonymous session restoration, signal publishing, and a live list only. No additional dependencies.
+SpotSoon is a native SwiftUI and Supabase app for short-lived campus parking handovers. It uses anonymous authentication, a public Realtime signal feed, a private saved garage, atomic lifecycle RPCs, and participant-only vehicle/pass snapshots. No service-role key or additional dependency is used by the client.
 
 ## Local configuration
 
@@ -10,20 +10,21 @@ From the repository root:
 cp Configuration/Supabase.example.plist SpotSoon/Supabase.local.plist
 ```
 
-Edit the local plist with your project's HTTPS `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`). Use the publishable key from the project's API Keys settings; never a secret or service-role key. The real plist is Git-ignored. Xcode's synchronized SpotSoon folder automatically bundles it; rebuild after changing it. The example stays outside the app folder. Missing/placeholder configuration produces a visible development error; builds and unit tests need no credentials. Configuration is excluded from source control, but a client publishable key is necessarily included in the installed app. RLS protects the data.
+Edit the local plist with the project HTTPS `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`). Obtain both from the Supabase project API settings. Never use the secret or service-role key. The real plist is ignored by Git; the safe example contains placeholders. Missing or placeholder values produce a visible development error.
 
-## Supabase dashboard setup (manual)
+## Manual Supabase setup
 
-1. In Authentication → Sign In / Providers, enable anonymous sign-ins and allow new sign-ups. See [Anonymous Sign-Ins](https://supabase.com/docs/guides/auth/auth-anonymous).
-2. Run `supabase/parking_signals.sql` once in the SQL Editor of a fresh project. It creates the table, constraints, SELECT/INSERT permissions, owner-checked RLS, and adds the table to `supabase_realtime`. If the table already exists, compare its schema and policies before applying the script.
-3. Verify Database → Publications → `supabase_realtime` includes `public.parking_signals`. See [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
-4. Copy the project URL and publishable key into the local plist. This spike has no CAPTCHA UI; use a development project whose Auth settings do not require CAPTCHA.
+1. In Authentication → Sign In / Providers, enable anonymous sign-ins and new sign-ups.
+2. For a fresh project, run [`supabase/parking_signals.sql`](supabase/parking_signals.sql) once in the SQL Editor.
+3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, also run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql) to repair existing accounts with no current selection and reinstall the delete fallback trigger. Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
+4. In Database → Publications → `supabase_realtime`, confirm that `public.parking_signals` is included exactly once. Confirm that `public.vehicles` and `public.parking_signal_handovers` are absent.
+5. In Table Editor or SQL policies, confirm RLS is enabled on all three tables. `vehicles` must have owner-only SELECT/INSERT/UPDATE/DELETE policies. `parking_signal_handovers` must have only its participant SELECT policy and no client write policy.
 
-Authenticated users (including anonymous Auth users) can read rows and insert only their own active signals. The app does not grant update/delete permissions. Dashboard changes can exercise those Realtime events. Expiry is a timestamp filter; no scheduled database job or status mutation is needed.
+The app can directly read the public signal feed and manage only its own saved vehicle rows. Publishing, claiming, arrival, release, cancellation, vacancy, completion, unavailability, expiration cleanup, and Today’s Vehicle selection use authenticated `SECURITY DEFINER` functions with an empty `search_path`. Publishing and claiming copy vehicle snapshots from caller-owned database rows in the same transaction. The public Realtime payload never contains saved vehicles, snapshots, or the visual pass.
 
-## Build and all tests
+## Build and tests
 
-Open `SpotSoon.xcodeproj`, select the shared `SpotSoon` scheme and an iOS 26.5 simulator. Run Product → Build, then Product → Test. CLI equivalent:
+Open `SpotSoon.xcodeproj`, choose the shared `SpotSoon` scheme and an iOS Simulator, then run Product → Build and Product → Test. CLI equivalent:
 
 ```sh
 xcodebuild -project SpotSoon.xcodeproj -scheme SpotSoon \
@@ -31,34 +32,37 @@ xcodebuild -project SpotSoon.xcodeproj -scheme SpotSoon \
   -derivedDataPath /tmp/SpotSoonDerivedData build test
 ```
 
-Keep normal simulator code signing enabled. Supabase stores the anonymous session in Keychain;
-an unsigned installed build cannot persist that session and its database requests will fall back
-to the publishable key without an authenticated user.
+Keep normal simulator code signing enabled for manual database testing so the anonymous session can persist in Keychain. Unit tests use in-memory repositories and require no credentials.
 
-Tests use a fake repository and never contact Supabase. They cover active/status/expiry filtering (including the exact expiry boundary), chronological order, all three leaving/expiry calculations, authenticated ownership, and visible failures.
+## One-device Garage test
 
-## Two-simulator smoke test
+1. Launch SpotSoon and open the profile button → My Garage. Verify the empty state.
+2. Add a vehicle with nickname **My K5**, colour **Midnight grey**, type **Sedan**, make **Kia**, model **K5**, and plate suffix **404**. Leave “Use as Today’s Vehicle” on. Verify the badge and Settings summary.
+3. Add a second vehicle without selecting it. Choose “Use Today” and verify only that row has the badge.
+4. Edit its nickname or colour, cancel, and verify no saved value changes. Edit again and save; verify the new value appears.
+5. Delete the current vehicle. Verify the most recently updated remaining vehicle becomes Today’s Vehicle. Delete the final vehicle and verify the empty state.
+6. Open Create leaving signal. With an empty garage, verify Publish is blocked and Add Vehicle returns to the publish form with the new vehicle selected.
 
-1. Complete the dashboard and local configuration steps, then build the app using the command above.
-2. Open Simulator. Boot **iPhone 17 Pro** and **iPhone 17 Pro Max** via File → Open Simulator. These must be distinct devices, not clones sharing app state.
-3. Install and launch the same configured build on both devices (IDs below match this machine):
+## Two-simulator publish and handover test
 
-```sh
-xcrun simctl boot 7E930A73-EACC-4157-899F-F8069044342E
-xcrun simctl boot F4C1A649-783D-4890-A772-FB4053BBDF59
-# If already booted, skip the corresponding boot command.
-xcrun simctl install 7E930A73-EACC-4157-899F-F8069044342E /tmp/SpotSoonDerivedData/Build/Products/Debug-iphonesimulator/SpotSoon.app
-xcrun simctl install F4C1A649-783D-4890-A772-FB4053BBDF59 /tmp/SpotSoonDerivedData/Build/Products/Debug-iphonesimulator/SpotSoon.app
-xcrun simctl launch 7E930A73-EACC-4157-899F-F8069044342E com.zainab.SpotSoon
-xcrun simctl launch F4C1A649-783D-4890-A772-FB4053BBDF59 com.zainab.SpotSoon
-```
+Use two distinct simulator devices so each has a different anonymous user.
 
-4. Both should finish anonymous authentication with no login screen and show an empty list for a fresh database.
-5. On Pro, choose Create leaving signal → Campus A → A1 → 2 minutes → Publish. The sheet closes on success. Both devices should show the signal automatically; only Pro should say “Your signal.”
-6. On Pro Max, publish Campus B / B2 / 5 minutes. Both lists should show the earlier departure first, with ownership reversed for the second signal.
-7. Terminate and relaunch Pro. Its existing signal should still say “Your signal,” confirming session persistence.
-8. In the dashboard Table Editor, change the first row's status to `cancelled`. Both lists should remove it without refresh. Delete the second row; both should remove it. Publish another 2-minute signal and leave the app visible for 7 minutes: it should disappear at expiry with no database event.
-9. Background and foreground each app repeatedly. Live updates should recover without duplicate subscriptions. Disable the Mac's network briefly: requests/connection failures should appear visibly. Restore networking and use Refresh / Retry live updates if necessary.
-10. To check publish failure, disable networking before Publish: an error should remain in the sheet and the sheet should not dismiss. A transport failure can have an uncertain server outcome; inspect/refresh the list before retrying.
+1. Install and launch the configured build on both simulators. On device A, save **My K5 / Midnight grey / Sedan / Kia / K5 / 404**. On device B, save a different vehicle.
+2. On A, create Campus A → A1 → 10 minutes. Verify A’s selected vehicle appears under “Vehicle you’re leaving in,” then publish.
+3. On B, verify the signal arrives through Realtime. Tap Claim, confirm B’s Today’s Vehicle under “Vehicle you’re arriving in,” then confirm the claim.
+4. Verify A sees B’s arriving vehicle and B sees A’s leaving **Midnight grey Kia K5 Sedan · Plate ending 404**. Verify both show the same colour, animal symbol, and two-digit number. B can open the full-screen pass.
+5. Edit or delete either saved vehicle in My Garage. Verify the active handover still shows the original snapshot.
+6. On B, confirm “I’m Here.” On A, verify the arrived state, visually compare the pass while safely stopped, then confirm “I’ve Left.”
+7. On B, choose “I Got the Spot.” Verify the row and private data disappear on both devices. Repeat and choose “Spot Wasn’t Available.”
+8. Repeat with Release Claim from claimed and arrived states. Verify the owner snapshot remains, the claimant snapshot/pass disappear, and a new claim creates a newly generated pass and claimant snapshot.
+9. Verify creator cancellation from active, claimed, and arrived states removes the signal on both devices.
 
-The two-device network smoke test requires your configured Supabase project and is separate from offline unit tests.
+## Third-user privacy test
+
+1. Launch a third distinct simulator or erase/install on another simulator to obtain a third anonymous user.
+2. While A and B have a claimed, arrived, or vacated handover, open the feed on C. C may see only “Claimed” or “Handover in progress”; it must show no vehicle description and no pass.
+3. In the Supabase SQL Editor, test as authenticated users with JWT claims or use three normal clients: C’s `select * from vehicles` must return only C’s rows, and C’s `select * from parking_signal_handovers` must return no A/B row. A and B must each receive the same authorized snapshot row.
+4. Try `set_current_vehicle`, publish, and claim with a vehicle UUID owned by a different user. Each RPC must fail with `vehicle_unavailable`.
+5. Confirm direct client UPDATE of `parking_signals` lifecycle columns and direct INSERT/UPDATE/DELETE of `parking_signal_handovers` are denied.
+
+The service-role key bypasses RLS by design and therefore must remain outside the app and all client configuration.

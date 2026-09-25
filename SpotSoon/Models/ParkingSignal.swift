@@ -6,14 +6,29 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
         var title: String { self == .campusA ? "Campus A" : "Campus B" }
         var zones: [String] { self == .campusA ? ["A1", "A2", "A3"] : ["B1", "B2", "B3"] }
     }
-    enum Status: String, Codable, Sendable { case active, claimed, cancelled, expired }
+    enum Status: String, Codable, Sendable {
+        case active, claimed, arrived, vacated
+        case completed, unavailable, cancelled, expired
 
-    enum ClaimPresentation: Equatable, Sendable {
+        var isTerminal: Bool {
+            switch self {
+            case .completed, .unavailable, .cancelled, .expired: true
+            case .active, .claimed, .arrived, .vacated: false
+            }
+        }
+    }
+
+    enum UserState: Equatable, Sendable {
         case yourSignal
         case available
         case someoneHeadingThere
         case youreHeadingThere
         case claimed
+        case claimantArrived
+        case youAreHere
+        case handoverInProgress
+        case driverLeft
+        case waitingForClaimant
 
         var message: String {
             switch self {
@@ -22,10 +37,17 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
             case .someoneHeadingThere: "Someone is heading there"
             case .youreHeadingThere: "You’re heading there"
             case .claimed: "Claimed"
+            case .claimantArrived: "The claimant has arrived"
+            case .youAreHere: "You told the driver you’re here"
+            case .handoverInProgress: "Handover in progress"
+            case .driverLeft: "The driver has left"
+            case .waitingForClaimant: "Waiting for the claimant to confirm"
             }
         }
+    }
 
-        var canClaim: Bool { self == .available }
+    enum LifecycleAction: Hashable, Sendable {
+        case claim, cancel, release, arrive, vacate, complete, unavailable, showPass
     }
 
     let id: UUID
@@ -78,18 +100,48 @@ nonisolated struct ParkingSignal: Codable, Identifiable, Equatable, Sendable {
     }
 
     static func visible(_ signals: [Self], at now: Date) -> [Self] {
-        signals.filter { ($0.status == .active || $0.status == .claimed) && $0.expiresAt > now }
+        signals.filter { !$0.status.isTerminal && $0.expiresAt > now }
             .sorted { $0.leavingAt == $1.leavingAt ? $0.id.uuidString < $1.id.uuidString : $0.leavingAt < $1.leavingAt }
     }
 
-    func claimPresentation(for userID: UUID) -> ClaimPresentation {
-        if status == .active {
+    func userState(for userID: UUID) -> UserState {
+        switch status {
+        case .active:
             return createdBy == userID ? .yourSignal : .available
-        }
-        if status == .claimed {
+        case .claimed:
             if createdBy == userID { return .someoneHeadingThere }
             if claimedBy == userID { return .youreHeadingThere }
+            return .claimed
+        case .arrived:
+            if createdBy == userID { return .claimantArrived }
+            if claimedBy == userID { return .youAreHere }
+            return .handoverInProgress
+        case .vacated:
+            if claimedBy == userID { return .driverLeft }
+            if createdBy == userID { return .waitingForClaimant }
+            return .handoverInProgress
+        case .completed, .unavailable, .cancelled, .expired:
+            return .handoverInProgress
         }
-        return .claimed
+    }
+
+    func allowedActions(for userID: UUID) -> Set<LifecycleAction> {
+        let isCreator = createdBy == userID
+        let isClaimant = claimedBy == userID
+        switch status {
+        case .active:
+            return isCreator ? [.cancel] : [.claim]
+        case .claimed:
+            if isCreator { return [.cancel] }
+            if isClaimant { return [.release, .arrive, .showPass] }
+        case .arrived:
+            if isCreator { return [.cancel, .vacate] }
+            if isClaimant { return [.release, .showPass] }
+        case .vacated:
+            if isClaimant { return [.complete, .unavailable, .showPass] }
+        case .completed, .unavailable, .cancelled, .expired:
+            break
+        }
+        return []
     }
 }

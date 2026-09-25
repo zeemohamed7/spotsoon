@@ -4,13 +4,14 @@ import Observation
 @MainActor @Observable
 final class SignalStore {
     private(set) var signals: [ParkingSignal] = []
+    private(set) var handoverDetails: [UUID: HandoverDetails] = [:]
     private(set) var isLoading = false
     private(set) var isPublishing = false
-    private(set) var claimingSignalIDs: Set<UUID> = []
+    private(set) var inFlightSignalIDs: Set<UUID> = []
     var listError: String?
     var connectionError: String?
     var publishError: String?
-    private(set) var claimErrors: [UUID: String] = [:]
+    private(set) var actionErrors: [UUID: String] = [:]
     let userID: UUID
     private let repository: any ParkingSignalRepository
     private var observationTask: Task<Void, Never>?
@@ -26,9 +27,13 @@ final class SignalStore {
         let version = refreshVersion
         isLoading = true
         do {
-            let fetched = try await repository.fetchActive(now: now)
+            let feed = try await repository.fetchFeed(now: now)
             guard version == refreshVersion else { return }
-            signals = ParkingSignal.visible(fetched, at: now)
+            signals = ParkingSignal.visible(feed.signals, at: now)
+            let privateSignalIDs = Set(signals.lazy.filter {
+                $0.createdBy == self.userID || $0.claimedBy == self.userID
+            }.map(\.id))
+            handoverDetails = feed.handoverDetails.filter { privateSignalIDs.contains($0.key) }
             listError = nil
         } catch {
             guard version == refreshVersion else { return }
@@ -76,8 +81,18 @@ final class SignalStore {
         }
     }
 
-    func publish(campus: ParkingSignal.Campus, zone: String, minutes: Int, now: Date = .now) async -> Bool {
+    func publish(
+        campus: ParkingSignal.Campus,
+        zone: String,
+        minutes: Int,
+        ownerVehicleID: UUID?,
+        now: Date = .now
+    ) async -> Bool {
         guard !isPublishing else { return false }
+        guard let ownerVehicleID else {
+            publishError = "Select the vehicle you’re leaving in."
+            return false
+        }
         guard campus.zones.contains(zone), [2, 5, 10].contains(minutes) else {
             publishError = "Choose a valid zone and leaving time."
             return false
@@ -87,7 +102,9 @@ final class SignalStore {
         defer { isPublishing = false }
         do {
             let signal = ParkingSignal.leaving(userID: userID, campus: campus, zone: zone, minutes: minutes, now: now)
-            try await repository.insert(signal)
+            let published = try await repository.publish(signal, ownerVehicleID: ownerVehicleID)
+            guard published.createdBy == userID else { throw ParkingSignalRepositoryError.invalidSignalResponse }
+            apply(published, now: now)
             await refresh()
             return true
         } catch {
@@ -96,37 +113,93 @@ final class SignalStore {
         }
     }
 
-    func claim(_ signal: ParkingSignal, now: Date = .now) async -> Bool {
-        guard signal.status == .active, signal.createdBy != userID else { return false }
-        guard claimingSignalIDs.insert(signal.id).inserted else { return false }
-        claimErrors[signal.id] = nil
-        defer { claimingSignalIDs.remove(signal.id) }
+    func claim(_ signal: ParkingSignal, claimantVehicleID: UUID?, now: Date = .now) async -> Bool {
+        guard signal.allowedActions(for: userID).contains(.claim) else { return false }
+        guard let claimantVehicleID else {
+            actionErrors[signal.id] = "Select the vehicle you’re arriving in."
+            return false
+        }
+        guard inFlightSignalIDs.insert(signal.id).inserted else { return false }
+        actionErrors[signal.id] = nil
+        defer { inFlightSignalIDs.remove(signal.id) }
 
         do {
-            let claimed = try await repository.claim(signalID: signal.id)
+            let claimed = try await repository.claim(signalID: signal.id, claimantVehicleID: claimantVehicleID)
             guard claimed.id == signal.id else {
-                throw ParkingSignalRepositoryError.invalidClaimResponse
+                throw ParkingSignalRepositoryError.invalidSignalResponse
             }
-            if let index = signals.firstIndex(where: { $0.id == claimed.id }) {
-                signals[index] = claimed
-            } else {
-                signals.append(claimed)
-            }
-            signals = ParkingSignal.visible(signals, at: now)
+            apply(claimed, now: now)
+            await refresh(now: now)
             return true
         } catch {
             if let repositoryError = error as? ParkingSignalRepositoryError,
                repositoryError == .signalUnavailable {
-                claimErrors[signal.id] = "This signal was already claimed or is no longer available."
+                actionErrors[signal.id] = repositoryError.localizedDescription
             } else {
-                claimErrors[signal.id] = "Could not claim signal: \(error.localizedDescription)"
+                actionErrors[signal.id] = "Could not claim signal: \(error.localizedDescription)"
             }
             await refresh()
             return false
         }
     }
 
-    func isClaiming(_ signalID: UUID) -> Bool {
-        claimingSignalIDs.contains(signalID)
+    func perform(_ action: ParkingSignal.LifecycleAction, on signal: ParkingSignal, now: Date = .now) async -> Bool {
+        guard action != .claim, action != .showPass,
+              signal.allowedActions(for: userID).contains(action) else { return false }
+        guard inFlightSignalIDs.insert(signal.id).inserted else { return false }
+        actionErrors[signal.id] = nil
+        defer { inFlightSignalIDs.remove(signal.id) }
+
+        do {
+            let updated: ParkingSignal
+            switch action {
+            case .arrive: updated = try await repository.markArrived(signalID: signal.id)
+            case .release: updated = try await repository.releaseClaim(signalID: signal.id)
+            case .cancel: updated = try await repository.cancel(signalID: signal.id)
+            case .vacate: updated = try await repository.markVacated(signalID: signal.id)
+            case .complete: updated = try await repository.complete(signalID: signal.id)
+            case .unavailable: updated = try await repository.markUnavailable(signalID: signal.id)
+            case .claim, .showPass: return false
+            }
+            guard updated.id == signal.id else {
+                throw ParkingSignalRepositoryError.invalidSignalResponse
+            }
+            apply(updated, now: now)
+            if updated.status.isTerminal {
+                handoverDetails[signal.id] = nil
+            }
+            await refresh(now: now)
+            return true
+        } catch {
+            actionErrors[signal.id] = "Could not complete action: \(error.localizedDescription)"
+            await refresh()
+            return false
+        }
+    }
+
+    func isPerformingAction(on signalID: UUID) -> Bool {
+        inFlightSignalIDs.contains(signalID)
+    }
+
+    func handover(for signal: ParkingSignal) -> HandoverDetails? {
+        guard signal.createdBy == userID || signal.claimedBy == userID else { return nil }
+        return handoverDetails[signal.id]
+    }
+
+    func clearActionError(for signalID: UUID) {
+        actionErrors[signalID] = nil
+    }
+
+    func setActionError(_ message: String, for signalID: UUID) {
+        actionErrors[signalID] = message
+    }
+
+    private func apply(_ signal: ParkingSignal, now: Date) {
+        if let index = signals.firstIndex(where: { $0.id == signal.id }) {
+            signals[index] = signal
+        } else {
+            signals.append(signal)
+        }
+        signals = ParkingSignal.visible(signals, at: now)
     }
 }
