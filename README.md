@@ -16,7 +16,7 @@ Edit the local plist with the project HTTPS `SUPABASE_URL` and `SUPABASE_PUBLISH
 
 1. In Authentication → Sign In / Providers, enable anonymous sign-ins and new sign-ups.
 2. For a fresh project, run [`supabase/parking_signals.sql`](supabase/parking_signals.sql) once in the SQL Editor.
-3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql), [`202609250002_add_gps_verified_parking_zone.sql`](supabase/migrations/202609250002_add_gps_verified_parking_zone.sql), [`202609250003_add_campus_b_parking_zone.sql`](supabase/migrations/202609250003_add_campus_b_parking_zone.sql), then [`202609250004_enforce_one_open_signal_per_creator.sql`](supabase/migrations/202609250004_enforce_one_open_signal_per_creator.sql). Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
+3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql), [`202609250002_add_gps_verified_parking_zone.sql`](supabase/migrations/202609250002_add_gps_verified_parking_zone.sql), [`202609250003_add_campus_b_parking_zone.sql`](supabase/migrations/202609250003_add_campus_b_parking_zone.sql), [`202609250004_enforce_one_open_signal_per_creator.sql`](supabase/migrations/202609250004_enforce_one_open_signal_per_creator.sql), then [`202609250005_repair_zone_and_expiry_api_access.sql`](supabase/migrations/202609250005_repair_zone_and_expiry_api_access.sql). Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
 4. In Database → Publications → `supabase_realtime`, confirm that `public.parking_signals` is included exactly once. Confirm that `public.parking_zones`, `public.vehicles`, and `public.parking_signal_handovers` are absent.
 5. In Table Editor or SQL policies, confirm RLS is enabled on all four tables. `parking_zones` exposes only active rows to authenticated users and has no client write policy. `vehicles` must have owner-only SELECT/INSERT/UPDATE/DELETE policies. `parking_signal_handovers` must have only its participant SELECT policy and no client write policy.
 
@@ -72,7 +72,7 @@ Use two distinct simulator devices so each has a different anonymous user.
 
 ## Campus B and multi-zone verification
 
-Apply migrations through `202609250004_enforce_one_open_signal_per_creator.sql` manually before this test.
+Apply migrations through `202609250005_repair_zone_and_expiry_api_access.sql` manually before this test.
 
 1. Launch SpotSoon and verify both Campus A and Campus B markers and verification circles appear. Use the segmented parking-area control, either marker, and the overview map button. Verify each interaction changes the selected styling, landmark, map focus, and feed without removing signals from the other zone.
 2. Select Campus B. Confirm the screen shows **Campus B Student Car Park**, **formerly BTI**, and **Beside Building 20**.

@@ -47,7 +47,7 @@ enum ParkingSignalRepositoryError: LocalizedError, Equatable {
         case .locationInaccurate: "GPS accuracy must improve to 65 metres or better."
         case .outsideParkingZone: "You must be inside the selected student parking area to publish."
         case .databaseSetupRequired:
-            "Supabase database update required. Run the pending ordered migrations through 202609250004_enforce_one_open_signal_per_creator.sql, then restart SpotSoon."
+            "Supabase database update required. Run the pending ordered migrations through 202609250005_repair_zone_and_expiry_api_access.sql, then restart SpotSoon."
         case .invalidSignalResponse: "The server returned an invalid parking signal."
         }
     }
