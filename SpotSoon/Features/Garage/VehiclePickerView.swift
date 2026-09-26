@@ -15,7 +15,7 @@ struct VehiclePickerView: View {
             HStack {
                 Text(title.uppercased())
                     .font(.caption.bold())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                 Spacer()
                 if !store.vehicles.isEmpty {
                     Menu("Change Vehicle") {
@@ -34,43 +34,43 @@ struct VehiclePickerView: View {
                         Button("Add Vehicle", systemImage: "plus") { showingAddVehicle = true }
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.spotPurple)
+                    .foregroundStyle(Color.spotAccent)
                 }
             }
 
             if let selectedVehicle {
                 HStack(spacing: 12) {
                     Image(systemName: "car.fill")
-                        .foregroundStyle(Color.spotPurple)
+                        .foregroundStyle(Color.spotAccent)
                         .frame(width: 46, height: 46)
-                        .background(Color.spotLavender, in: Circle())
+                        .background(Color.spotAccentSoft, in: Circle())
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 7) {
                             Text(selectedVehicle.nickname).font(.headline)
                             if selectedVehicle.isCurrent {
                                 Text("Today’s Vehicle")
                                     .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(Color.spotPurpleDark)
+                                    .foregroundStyle(Color.spotAccentStrong)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 3)
-                                    .background(Color.spotLavender, in: Capsule())
+                                    .background(Color.spotAccentSoft, in: Capsule())
                             }
                         }
                         Text(selectedVehicle.summary)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.spotTextSecondary)
                             .lineLimit(2)
                     }
                     Spacer()
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(Color.spotPurple)
+                        .foregroundStyle(Color.spotAccent)
                 }
                 .padding(14)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
+                .background(Color.spotSurfaceElevated, in: RoundedRectangle(cornerRadius: 17))
                 .overlay {
                     RoundedRectangle(cornerRadius: 17)
-                        .stroke(Color.spotPurple.opacity(0.18), lineWidth: 1)
+                        .stroke(Color.spotAccent.opacity(0.28), lineWidth: 1)
                 }
             } else if store.isLoading {
                 ProgressView("Loading vehicles…")
@@ -81,7 +81,7 @@ struct VehiclePickerView: View {
             }
 
             if let error = store.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).font(.caption).foregroundStyle(Color.spotError)
             }
         }
         .task {

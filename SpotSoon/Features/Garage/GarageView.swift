@@ -11,17 +11,17 @@ struct GarageView: View {
             VStack(alignment: .leading, spacing: 18) {
                 if let current = store.currentVehicle {
                     HStack(spacing: 9) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.spotPurple)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.spotAccent)
                         Text("Active vehicle set to \(current.nickname)")
-                            .font(.caption.weight(.semibold)).foregroundStyle(Color.spotInk)
+                            .font(.caption.weight(.semibold)).foregroundStyle(Color.spotTextPrimary)
                         Spacer()
                     }
                     .padding(12)
-                    .background(Color.spotLavender, in: RoundedRectangle(cornerRadius: 13))
+                    .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 13))
                 }
 
                 Text("Your selected vehicle helps the other driver recognize you during an active curb handover.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Color.spotTextSecondary)
 
                 if store.isLoading && store.vehicles.isEmpty {
                     ProgressView("Loading garage…")
@@ -34,7 +34,7 @@ struct GarageView: View {
                         Spacer()
                         Label("Tap to switch", systemImage: "arrow.left.arrow.right")
                     }
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    .font(.caption2.weight(.semibold)).foregroundStyle(Color.spotTextSecondary)
 
                     VStack(spacing: 12) {
                         ForEach(store.vehicles) { vehicleCard($0) }
@@ -43,12 +43,12 @@ struct GarageView: View {
 
                 if let error = store.errorMessage {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(error).font(.footnote).foregroundStyle(.red)
+                        Text(error).font(.footnote).foregroundStyle(Color.spotError)
                         Button("Retry") { Task { await store.load() } }.font(.footnote.weight(.semibold))
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 13))
+                    .background(Color.spotError.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
                 }
 
                 Button { showingAddVehicle = true } label: {
@@ -56,25 +56,25 @@ struct GarageView: View {
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(.background, in: RoundedRectangle(cornerRadius: 13))
+                        .background(Color.spotSurface, in: RoundedRectangle(cornerRadius: 13))
                         .overlay {
                             RoundedRectangle(cornerRadius: 13)
-                                .stroke(Color.spotPurple.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                                .stroke(Color.spotAccent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [5]))
                         }
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
 
                 Label {
                     Text("Privacy First: SpotSoon only reveals vehicle details to the other participant during an active handover.")
                 } icon: {
-                    Image(systemName: "shield.fill").foregroundStyle(.blue)
+                    Image(systemName: "shield.fill").foregroundStyle(Color.spotAccent)
                 }
-                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 5)
+                .font(.caption).foregroundStyle(Color.spotTextSecondary).padding(.horizontal, 5)
             }
             .padding(20)
         }
-        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+        .spotScreenBackground(grouped: true)
         .navigationTitle("My Garage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -106,13 +106,13 @@ struct GarageView: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "car.side").font(.system(size: 36)).foregroundStyle(Color.spotPurple)
+            Image(systemName: "car.side").font(.system(size: 36)).foregroundStyle(Color.spotAccent)
             Text("Your garage is empty").font(.headline)
             Text("Add a vehicle to publish or claim a parking signal.")
-                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.footnote).foregroundStyle(Color.spotTextSecondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 34)
-        .background(.background, in: RoundedRectangle(cornerRadius: 16))
+        .spotCard(radius: 16)
     }
 
     private func vehicleCard(_ vehicle: Vehicle) -> some View {
@@ -125,18 +125,18 @@ struct GarageView: View {
                     HStack(alignment: .top, spacing: 11) {
                     Image(systemName: vehicle.isCurrent ? "checkmark.circle.fill" : "circle")
                         .font(.title3)
-                        .foregroundStyle(vehicle.isCurrent ? Color.spotPurple : Color.secondary.opacity(0.35))
+                        .foregroundStyle(vehicle.isCurrent ? Color.spotAccent : Color.spotDisabled)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 7) {
-                            Text(vehicle.nickname).font(.headline).foregroundStyle(Color.spotInk)
+                            Text(vehicle.nickname).font(.headline).foregroundStyle(Color.spotTextPrimary)
                             if vehicle.isCurrent {
                                 Text("Today’s Vehicle")
-                                    .font(.caption2.weight(.semibold)).foregroundStyle(Color.spotPurple)
+                                    .font(.caption2.weight(.semibold)).foregroundStyle(Color.spotAccent)
                                     .padding(.horizontal, 7).padding(.vertical, 3)
-                                    .background(Color.spotLavender, in: Capsule())
+                                    .background(Color.spotAccentSoft, in: Capsule())
                             }
                         }
-                        Text(primaryDescription(vehicle)).font(.caption).foregroundStyle(.secondary)
+                        Text(primaryDescription(vehicle)).font(.caption).foregroundStyle(Color.spotTextSecondary)
                     }
                     }
                     .contentShape(Rectangle())
@@ -167,15 +167,15 @@ struct GarageView: View {
                 Circle().fill(swatchColor(vehicle.color)).frame(width: 9, height: 9)
                 Text(vehicle.color)
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.caption).foregroundStyle(Color.spotTextSecondary)
 
             if store.isWorking(on: vehicle.id) { ProgressView().controlSize(.small) }
         }
         .padding(15)
-        .background(.background, in: RoundedRectangle(cornerRadius: 15))
+        .background(Color.spotSurface, in: RoundedRectangle(cornerRadius: 15))
         .overlay {
             RoundedRectangle(cornerRadius: 15)
-                .stroke(vehicle.isCurrent ? Color.spotPurple.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: vehicle.isCurrent ? 1.5 : 1)
+                .stroke(vehicle.isCurrent ? Color.spotAccent.opacity(0.5) : Color.spotBorder, lineWidth: vehicle.isCurrent ? 1.5 : 1)
         }
         .disabled(store.isWorking(on: vehicle.id))
     }

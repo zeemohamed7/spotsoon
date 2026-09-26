@@ -55,7 +55,6 @@ final class ParkingZoneTests: XCTestCase {
         let zone = try decoder.decode(ParkingZone.self, from: data)
 
         XCTAssertEqual(zone, ParkingZone.campusBStudent.withDates(zone.createdAt, zone.updatedAt))
-        XCTAssertEqual(zone.alternativeContext, "formerly BTI")
         XCTAssertTrue(zone.isSupported)
     }
 
@@ -214,6 +213,7 @@ final class ParkingZoneTests: XCTestCase {
         XCTAssertEqual(SupabaseParkingSignalRepository.repositoryError(for: "22023 location_unavailable"), .locationUnavailable)
         XCTAssertEqual(SupabaseParkingSignalRepository.repositoryError(for: "22023 location_inaccurate"), .locationInaccurate)
         XCTAssertEqual(SupabaseParkingSignalRepository.repositoryError(for: "P0001 outside_parking_zone"), .outsideParkingZone)
+        XCTAssertEqual(SupabaseParkingSignalRepository.repositoryError(for: "22023 invalid_parking_hint"), .invalidParkingHint)
         XCTAssertNil(SupabaseParkingSignalRepository.repositoryError(for: "some_other_failure"))
     }
 

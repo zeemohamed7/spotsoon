@@ -11,12 +11,12 @@ struct CampusBoundaryPermissionView: View {
             HStack {
                 Button("Back", systemImage: "chevron.left", action: backAction)
                     .labelStyle(.iconOnly)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                 Spacer()
                 Text("SPOTSOON CAMPUS RADAR")
                     .font(.caption2.bold())
                     .tracking(1.1)
-                    .foregroundStyle(Color.spotPurple)
+                    .foregroundStyle(Color.spotAccent)
                 Spacer()
                 Color.clear.frame(width: 24, height: 24)
             }
@@ -31,10 +31,10 @@ struct CampusBoundaryPermissionView: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .foregroundStyle(Color.spotInk)
+                    .foregroundStyle(Color.spotTextPrimary)
                 Text("SpotSoon confirms that you are inside an approved student parking area before creating a signal.")
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -49,7 +49,7 @@ struct CampusBoundaryPermissionView: View {
 
             Button(action: enableAction) {
                 if isRequesting {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(Color.spotAccentForeground)
                 } else {
                     Label("Enable Campus Location", systemImage: "location.fill")
                 }
@@ -59,25 +59,25 @@ struct CampusBoundaryPermissionView: View {
 
             Button("Not Now", action: notNowAction)
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
         }
         .padding(26)
-        .background(.white)
+        .spotScreenBackground()
     }
 
     private var boundaryDiagram: some View {
         ZStack {
             ForEach([170.0, 126.0, 82.0], id: \.self) { diameter in
                 Circle()
-                    .stroke(Color.spotPurple.opacity(0.12), lineWidth: 1.5)
+                    .stroke(Color.spotAccent.opacity(0.22), lineWidth: 1.5)
                     .frame(width: diameter, height: diameter)
             }
             Image(systemName: "location.fill")
                 .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.spotAccentForeground)
                 .frame(width: 58, height: 58)
-                .background(Color.spotPurple.gradient, in: Circle())
-                .shadow(color: Color.spotPurple.opacity(0.25), radius: 18)
+                .background(Color.spotAccent.gradient, in: Circle())
+                .shadow(color: Color.spotAccent.opacity(0.25), radius: 18)
         }
         .frame(height: 180)
         .accessibilityElement(children: .ignore)
@@ -87,11 +87,11 @@ struct CampusBoundaryPermissionView: View {
     private func detail(_ title: String, _ subtitle: String, _ icon: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.subheadline.weight(.semibold))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(subtitle).font(.caption).foregroundStyle(Color.spotTextSecondary)
             }
         }
     }

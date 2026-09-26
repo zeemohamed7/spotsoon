@@ -70,6 +70,97 @@ final class SignalStoreTests: XCTestCase {
         XCTAssertNil(claimantRepository.callCounts[.claim])
     }
 
+    func testParkingHintValidationTrimsAndRejectsInvalidValues() throws {
+        XCTAssertNil(try ParkingHint.normalize(nil))
+        XCTAssertNil(try ParkingHint.normalize("  \n\t "))
+        XCTAssertEqual(try ParkingHint.normalize("  Row 3, near the canopy  "), "Row 3, near the canopy")
+        XCTAssertEqual(try ParkingHint.normalize(String(repeating: "A", count: 120))?.count, 120)
+        XCTAssertThrowsError(try ParkingHint.normalize(String(repeating: "A", count: 121))) {
+            XCTAssertEqual($0 as? ParkingHintValidationError, .tooLong)
+        }
+        XCTAssertThrowsError(try ParkingHint.normalize("Row 3\u{0007}near canopy")) {
+            XCTAssertEqual($0 as? ParkingHintValidationError, .invalidCharacters)
+        }
+    }
+
+    func testPublishRequestEncodesPrivateParkingHintRPCParameter() throws {
+        let owner = UUID()
+        let request = PublishParkingSignalRequest(
+            signal: signal(owner: owner),
+            zoneID: ParkingZone.campusAStudent.id,
+            ownerVehicleID: UUID(),
+            location: insideLocation,
+            parkingHint: "Row 3, near shade canopy"
+        )
+        let data = try JSONEncoder().encode(PublishParameters(request: request))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["p_parking_hint"] as? String, "Row 3, near shade canopy")
+        XCTAssertNil(object["parking_hint"])
+    }
+
+    func testHandoverDetailsDecodesPrivateParkingHint() throws {
+        let signalID = UUID()
+        let json = """
+        {
+          "signal_id": "\(signalID.uuidString)",
+          "pass_color": null,
+          "symbol_name": null,
+          "confirmation_number": null,
+          "parking_hint": "Row 3, near shade canopy",
+          "owner_nickname": "My K5",
+          "owner_color": "Midnight grey",
+          "owner_vehicle_type": "sedan",
+          "owner_make": "Kia",
+          "owner_model": "K5",
+          "owner_plate_suffix": "404",
+          "created_at": 0
+        }
+        """
+        let details = try JSONDecoder().decode(HandoverDetails.self, from: Data(json.utf8))
+        XCTAssertEqual(details.signalID, signalID)
+        XCTAssertEqual(details.parkingHint, "Row 3, near shade canopy")
+    }
+
+    func testPublishNormalizesHintAndParticipantsReceiveItOnlyWhenAuthorized() async throws {
+        let owner = UUID()
+        let claimant = UUID()
+        let stranger = UUID()
+        let backend = TestLifecycleBackend(now: now)
+        let ownerRepository = TestRepository(backend: backend, userID: owner)
+        let ownerStore = SignalStore(repository: ownerRepository, userID: owner)
+
+        let published = await ownerStore.publish(
+            zone: .campusAStudent,
+            minutes: 2,
+            ownerVehicleID: ownerRepository.vehicleID,
+            location: insideLocation,
+            bayHint: "  Row 3, near shade canopy  ",
+            now: now
+        )
+        XCTAssertTrue(published)
+        XCTAssertEqual(ownerRepository.publishedRequest?.parkingHint, "Row 3, near shade canopy")
+        let row = try XCTUnwrap(ownerStore.signals.first)
+        XCTAssertEqual(ownerStore.handover(for: row)?.parkingHint, "Row 3, near shade canopy")
+
+        let strangerStore = SignalStore(
+            repository: TestRepository(backend: backend, userID: stranger), userID: stranger
+        )
+        await strangerStore.refresh(now: now)
+        XCTAssertNil(strangerStore.handover(for: row))
+        XCTAssertTrue(strangerStore.handoverDetails.isEmpty)
+
+        let claimantRepository = TestRepository(backend: backend, userID: claimant)
+        let claimantStore = SignalStore(repository: claimantRepository, userID: claimant)
+        await claimantStore.refresh(now: now)
+        XCTAssertNil(claimantStore.handover(for: row))
+        let claimedSuccessfully = await claimantStore.claim(
+            row, claimantVehicleID: claimantRepository.vehicleID, now: now
+        )
+        XCTAssertTrue(claimedSuccessfully)
+        let claimed = try XCTUnwrap(claimantStore.signals.first)
+        XCTAssertEqual(claimantStore.handover(for: claimed)?.parkingHint, "Row 3, near shade canopy")
+    }
+
     func testSnapshotsUseOwnedVehiclesAndRejectForeignVehicleIDs() async throws {
         let owner = UUID()
         let claimant = UUID()
@@ -204,8 +295,17 @@ final class SignalStoreTests: XCTestCase {
             XCTAssertNil(store.handover(for: store.signals[0]))
             let releasedDetails = try! XCTUnwrap(backend.handoverDetails[row.id])
             XCTAssertEqual(releasedDetails.ownerVehicle, oldPass.ownerVehicle)
+            XCTAssertEqual(releasedDetails.parkingHint, oldPass.parkingHint)
             XCTAssertNil(releasedDetails.claimantVehicle)
             XCTAssertNil(releasedDetails.pass)
+
+            let ownerStore = SignalStore(
+                repository: TestRepository(backend: backend, userID: owner), userID: owner
+            )
+            await ownerStore.refresh(now: now)
+            XCTAssertEqual(ownerStore.handover(for: ownerStore.signals[0])?.parkingHint, oldPass.parkingHint)
+            await store.refresh(now: now)
+            XCTAssertTrue(store.handoverDetails.isEmpty)
 
             let repository = TestRepository(backend: backend, userID: claimant)
             let reclaimed = try! await repository.claim(
@@ -232,6 +332,32 @@ final class SignalStoreTests: XCTestCase {
             XCTAssertTrue(store.signals.isEmpty)
             XCTAssertEqual(backend.signals[row.id]?.status, .cancelled)
             XCTAssertNil(backend.handoverDetails[row.id])
+        }
+    }
+
+    func testTerminalTransitionsDeletePrivateParkingHintsWithHandoverDetails() async {
+        let owner = UUID()
+        let claimant = UUID()
+        let scenarios: [(ParkingSignal.Status, ParkingSignal.LifecycleAction, UUID)] = [
+            (.claimed, .cancel, owner),
+            (.vacated, .complete, claimant),
+            (.vacated, .unavailable, claimant)
+        ]
+
+        for (status, action, actor) in scenarios {
+            let row = signal(owner: owner, status: status, claimant: claimant)
+            let details = handover(signalID: row.id)
+            let backend = TestLifecycleBackend(now: now, signals: [row], details: [details])
+            let store = SignalStore(
+                repository: TestRepository(backend: backend, userID: actor), userID: actor
+            )
+            await store.refresh(now: now)
+            XCTAssertEqual(store.handover(for: row)?.parkingHint, details.parkingHint)
+
+            let succeeded = await store.perform(action, on: row, now: now)
+            XCTAssertTrue(succeeded)
+            XCTAssertNil(backend.handoverDetails[row.id])
+            XCTAssertNil(store.handoverDetails[row.id])
         }
     }
 
@@ -283,6 +409,84 @@ final class SignalStoreTests: XCTestCase {
         XCTAssertEqual(vacated.userState(for: claimant), .driverLeft)
         XCTAssertEqual(vacated.userState(for: owner), .waitingForClaimant)
         XCTAssertEqual(vacated.userState(for: stranger), .handoverInProgress)
+    }
+
+    func testSuccessfulClaimPresentsLiveHandoverAfterClaimSheetDismisses() {
+        let signalID = UUID()
+        var navigation = HandoverNavigationState()
+
+        navigation.claimSucceeded(signalID: signalID)
+        XCTAssertNil(navigation.liveRoute, "The claim sheet must dismiss before presenting another cover")
+        XCTAssertEqual(navigation.pendingClaimRoute?.signalID, signalID)
+
+        navigation.claimSheetDismissed()
+        XCTAssertNil(navigation.pendingClaimRoute)
+        XCTAssertEqual(navigation.liveRoute?.signalID, signalID)
+    }
+
+    func testCompactRowsExposeOnlyClaimOrResumeActionsByRole() {
+        let owner = UUID()
+        let claimant = UUID()
+        let stranger = UUID()
+        let active = signal(owner: owner)
+        let claimed = signal(owner: owner, status: .claimed, claimant: claimant)
+
+        XCTAssertEqual(active.compactAction(for: owner), .none)
+        XCTAssertEqual(active.compactAction(for: claimant), .claim)
+        XCTAssertEqual(claimed.compactAction(for: owner), .none)
+        XCTAssertEqual(claimed.compactAction(for: claimant), .resumeHandover)
+        XCTAssertEqual(claimed.compactAction(for: stranger), .none)
+        XCTAssertEqual(claimed.userState(for: owner).message, "Someone is heading there")
+        XCTAssertEqual(claimed.userState(for: claimant).message, "You’re heading there")
+        XCTAssertEqual(claimed.userState(for: stranger).message, "Claimed")
+    }
+
+    func testResumeAndFullPassCloseReturnToLiveHandover() {
+        let signalID = UUID()
+        var navigation = HandoverNavigationState()
+        var pass = HandoverPassPresentationState()
+
+        navigation.resume(signalID: signalID)
+        pass.show()
+        XCTAssertTrue(pass.isPresented)
+        XCTAssertEqual(navigation.liveRoute?.signalID, signalID)
+
+        pass.close()
+        XCTAssertFalse(pass.isPresented)
+        XCTAssertEqual(navigation.liveRoute?.signalID, signalID)
+
+        navigation.closeLiveHandover()
+        XCTAssertNil(navigation.liveRoute)
+    }
+
+    func testRelaunchRestoresOnlyCurrentClaimantsNonterminalHandover() {
+        let owner = UUID()
+        let claimant = UUID()
+        let stranger = UUID()
+
+        for status in [ParkingSignal.Status.claimed, .arrived, .vacated] {
+            let row = signal(owner: owner, status: status, claimant: claimant)
+            XCTAssertEqual(
+                HandoverNavigationState.restorableClaimantSignal(
+                    in: [row], userID: claimant, now: now
+                )?.id,
+                row.id
+            )
+            XCTAssertNil(HandoverNavigationState.restorableClaimantSignal(
+                in: [row], userID: owner, now: now
+            ))
+            XCTAssertNil(HandoverNavigationState.restorableClaimantSignal(
+                in: [row], userID: stranger, now: now
+            ))
+        }
+
+        let expired = signal(
+            owner: owner, leaving: -600, expiry: -1, status: .claimed, claimant: claimant
+        )
+        let terminal = signal(owner: owner, status: .completed, claimant: claimant)
+        XCTAssertNil(HandoverNavigationState.restorableClaimantSignal(
+            in: [expired, terminal], userID: claimant, now: now
+        ))
     }
 
     func testUnrelatedUserNeverKeepsLeakedPrivateDetails() async {
@@ -484,6 +688,7 @@ final class SignalStoreTests: XCTestCase {
                 nickname: "Campus SUV", color: "Silver", vehicleType: .suv,
                 make: nil, model: nil, plateSuffix: "7AB"
             ),
+            parkingHint: "Row 3, near shade canopy",
             createdAt: now
         )
     }
@@ -495,6 +700,7 @@ final class SignalStoreTests: XCTestCase {
         }
         XCTFail("Timed out waiting for asynchronous state")
     }
+
 }
 
 @MainActor
@@ -515,7 +721,12 @@ private final class TestLifecycleBackend {
         vehicles[id] = (userID, snapshot)
     }
 
-    func publish(_ signal: ParkingSignal, userID: UUID, vehicleID: UUID) throws -> ParkingSignal {
+    func publish(
+        _ signal: ParkingSignal,
+        userID: UUID,
+        vehicleID: UUID,
+        parkingHint: String?
+    ) throws -> ParkingSignal {
         guard signal.createdBy == userID,
               let vehicle = vehicles[vehicleID], vehicle.owner == userID else {
             throw ParkingSignalRepositoryError.vehicleUnavailable
@@ -523,7 +734,8 @@ private final class TestLifecycleBackend {
         signals[signal.id] = signal
         handoverDetails[signal.id] = HandoverDetails(
             signalID: signal.id, passColor: nil, symbolName: nil, confirmationNumber: nil,
-            ownerVehicle: vehicle.snapshot, claimantVehicle: nil, createdAt: now
+            ownerVehicle: vehicle.snapshot, claimantVehicle: nil,
+            parkingHint: parkingHint, createdAt: now
         )
         return signal
     }
@@ -539,10 +751,12 @@ private final class TestLifecycleBackend {
         signals[id] = updated
         passSequence += 1
         let ownerVehicle = handoverDetails[id]?.ownerVehicle ?? Self.ownerSnapshot
+        let parkingHint = handoverDetails[id]?.parkingHint
         handoverDetails[id] = HandoverDetails(
             signalID: id, passColor: .blue, symbolName: "bird.fill",
             confirmationNumber: String(format: "%02d", passSequence),
-            ownerVehicle: ownerVehicle, claimantVehicle: vehicle.snapshot, createdAt: now
+            ownerVehicle: ownerVehicle, claimantVehicle: vehicle.snapshot,
+            parkingHint: parkingHint, createdAt: now
         )
         return updated
     }
@@ -560,7 +774,8 @@ private final class TestLifecycleBackend {
             if let details = handoverDetails[id] {
                 handoverDetails[id] = HandoverDetails(
                     signalID: id, passColor: nil, symbolName: nil, confirmationNumber: nil,
-                    ownerVehicle: details.ownerVehicle, claimantVehicle: nil, createdAt: details.createdAt
+                    ownerVehicle: details.ownerVehicle, claimantVehicle: nil,
+                    parkingHint: details.parkingHint, createdAt: details.createdAt
                 )
             }
         case .cancel where [.active, .claimed, .arrived].contains(row.status) && row.createdBy == userID:
@@ -643,7 +858,8 @@ private final class TestRepository: ParkingSignalRepository {
         return try backend.publish(
             request.signal,
             userID: userID,
-            vehicleID: request.ownerVehicleID
+            vehicleID: request.ownerVehicleID,
+            parkingHint: request.parkingHint
         )
     }
 

@@ -172,6 +172,7 @@ create table public.parking_signal_handovers (
     pass_color text,
     symbol_name text,
     confirmation_number text,
+    parking_hint text,
     owner_nickname text not null,
     owner_color text not null,
     owner_vehicle_type text not null,
@@ -200,6 +201,15 @@ create table public.parking_signal_handovers (
     ),
     constraint handovers_pass_number_check
         check (confirmation_number is null or confirmation_number ~ '^[0-9]{2}$'),
+    constraint handovers_parking_hint_check check (
+        parking_hint is null or (
+            char_length(parking_hint) between 1 and 120
+            and parking_hint = regexp_replace(
+                parking_hint, '^[[:space:]]+|[[:space:]]+$', '', 'g'
+            )
+            and parking_hint !~ '[[:cntrl:]]'
+        )
+    ),
     constraint handovers_owner_nickname_check
         check (length(btrim(owner_nickname)) between 1 and 40),
     constraint handovers_owner_color_check
@@ -346,7 +356,8 @@ create function public.publish_parking_signal(
     p_horizontal_accuracy double precision,
     p_leaving_at timestamptz,
     p_expires_at timestamptz,
-    p_owner_vehicle_id uuid
+    p_owner_vehicle_id uuid,
+    p_parking_hint text default null
 )
 returns public.parking_signals
 language plpgsql
@@ -360,6 +371,7 @@ declare
     v_signal public.parking_signals;
     v_distance double precision;
     v_tolerance double precision;
+    v_parking_hint text;
 begin
     if v_user_id is null then
         raise exception using errcode = '42501', message = 'authentication_required';
@@ -390,6 +402,19 @@ begin
     where id = p_owner_vehicle_id and user_id = v_user_id;
     if not found then
         raise exception using errcode = 'P0001', message = 'vehicle_unavailable';
+    end if;
+
+    if p_parking_hint is null or p_parking_hint ~ '^[[:space:]]*$' then
+        v_parking_hint := null;
+    elsif p_parking_hint ~ '[[:cntrl:]]' then
+        raise exception using errcode = '22023', message = 'invalid_parking_hint';
+    else
+        v_parking_hint := regexp_replace(
+            p_parking_hint, '^[[:space:]]+|[[:space:]]+$', '', 'g'
+        );
+        if char_length(v_parking_hint) > 120 then
+            raise exception using errcode = '22023', message = 'invalid_parking_hint';
+        end if;
     end if;
 
     if p_device_latitude is null or p_device_longitude is null
@@ -424,10 +449,10 @@ begin
         p_leaving_at, p_expires_at, 'active'
     ) returning * into v_signal;
     insert into public.parking_signal_handovers (
-        signal_id, owner_nickname, owner_color, owner_vehicle_type,
+        signal_id, parking_hint, owner_nickname, owner_color, owner_vehicle_type,
         owner_make, owner_model, owner_plate_suffix
     ) values (
-        v_signal.id, v_vehicle.nickname, v_vehicle.color, v_vehicle.vehicle_type,
+        v_signal.id, v_parking_hint, v_vehicle.nickname, v_vehicle.color, v_vehicle.vehicle_type,
         v_vehicle.make, v_vehicle.model, v_vehicle.plate_suffix
     );
     return v_signal;
@@ -595,7 +620,7 @@ revoke all on function public.touch_vehicle_updated_at() from public, anon, auth
 revoke all on function public.select_vehicle_after_delete() from public, anon, authenticated, service_role;
 revoke all on function public.set_current_vehicle(uuid) from public, anon, service_role;
 revoke all on function public.haversine_distance_meters(double precision, double precision, double precision, double precision) from public, anon, authenticated, service_role;
-revoke all on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid) from public, anon, service_role;
+revoke all on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid, text) from public, anon, service_role;
 revoke all on function public.claim_parking_signal(uuid, uuid) from public, anon, service_role;
 revoke all on function public.arrive_at_parking_signal(uuid) from public, anon, service_role;
 revoke all on function public.release_parking_signal(uuid) from public, anon, service_role;
@@ -606,7 +631,7 @@ revoke all on function public.mark_parking_signal_unavailable(uuid) from public,
 revoke all on function public.expire_parking_signals() from public, anon, service_role;
 
 grant execute on function public.set_current_vehicle(uuid) to authenticated;
-grant execute on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid) to authenticated;
+grant execute on function public.publish_parking_signal(text, double precision, double precision, double precision, timestamptz, timestamptz, uuid, text) to authenticated;
 grant execute on function public.claim_parking_signal(uuid, uuid) to authenticated;
 grant execute on function public.arrive_at_parking_signal(uuid) to authenticated;
 grant execute on function public.release_parking_signal(uuid) to authenticated;

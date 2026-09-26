@@ -15,10 +15,10 @@ struct OwnerWaitingView: View {
                     VStack(spacing: 28) {
                         Label("BROADCASTING LIVE", systemImage: "circle.fill")
                             .font(.caption2.bold())
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Color.spotSuccess)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 7)
-                            .background(Color.green.opacity(0.08), in: Capsule())
+                            .background(Color.spotSuccess.opacity(0.1), in: Capsule())
 
                         radar(at: context.date)
 
@@ -26,29 +26,29 @@ struct OwnerWaitingView: View {
                             Text(countdown(at: context.date))
                                 .font(.system(size: 48, weight: .bold, design: .rounded))
                                 .monospacedDigit()
-                                .foregroundStyle(Color.spotInk)
+                                .foregroundStyle(Color.spotTextPrimary)
                             Text("Signal Active — Waiting for Driver")
                                 .font(.headline)
                             Text("Waiting for claimant…")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.spotTextSecondary)
                         }
 
                         details
 
                         Text("When claimed, you’ll receive matching vehicle details and a private visual token.")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.spotTextSecondary)
                             .multilineTextAlignment(.center)
                             .padding(16)
                             .frame(maxWidth: .infinity)
-                            .background(Color.spotLavender.opacity(0.7), in: RoundedRectangle(cornerRadius: 15))
+                            .background(Color.spotSurfaceElevated, in: RoundedRectangle(cornerRadius: 15))
 
                         if store.isPerformingAction(on: signal.id) {
                             ProgressView("Cancelling signal…")
                         }
                         if let error = store.actionErrors[signal.id] {
-                            Text(error).font(.caption).foregroundStyle(.red)
+                            Text(error).font(.caption).foregroundStyle(Color.spotError)
                         }
 
                         Button("Cancel Signal", role: .destructive) {
@@ -62,7 +62,7 @@ struct OwnerWaitingView: View {
                 }
             }
         }
-        .background(Color.spotLavender.opacity(0.28))
+        .background(Color.spotBackground)
         .confirmationDialog(
             "Cancel this signal?",
             isPresented: $confirmingCancellation,
@@ -83,37 +83,37 @@ struct OwnerWaitingView: View {
             Spacer()
             Text("Active Coordination")
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
             NavigationLink {
                 SettingsView(vehicleStore: vehicleStore, locationStore: locationStore)
             } label: {
                 Image(systemName: "person.fill")
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.spotAccentForeground)
                     .frame(width: 40, height: 40)
-                    .background(Color.spotPurple, in: Circle())
+                    .background(Color.spotAccent, in: Circle())
             }
             .accessibilityLabel("Profile and settings")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .background(.white)
+        .background(Color.spotSurface)
     }
 
     private func radar(at date: Date) -> some View {
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2) / 2
         return ZStack {
             Circle()
-                .stroke(Color.spotPurple.opacity(0.12 * (1 - phase)), lineWidth: 2)
+                .stroke(Color.spotAccent.opacity(0.16 * (1 - phase)), lineWidth: 2)
                 .frame(width: 220, height: 220)
                 .scaleEffect(0.76 + phase * 0.3)
-            Circle().stroke(Color.spotPurple.opacity(0.2), lineWidth: 2).frame(width: 168, height: 168)
-            Circle().stroke(Color.spotPurple.opacity(0.28), lineWidth: 2).frame(width: 116, height: 116)
+            Circle().stroke(Color.spotAccent.opacity(0.24), lineWidth: 2).frame(width: 168, height: 168)
+            Circle().stroke(Color.spotAccent.opacity(0.34), lineWidth: 2).frame(width: 116, height: 116)
             Image(systemName: "car.fill")
                 .font(.title)
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
                 .frame(width: 70, height: 70)
-                .background(.white, in: Circle())
-                .shadow(color: Color.spotPurple.opacity(0.15), radius: 14)
+                .background(Color.spotSurface, in: Circle())
+                .shadow(color: Color.spotAccent.opacity(0.2), radius: 14)
         }
         .frame(height: 230)
     }
@@ -122,7 +122,7 @@ struct OwnerWaitingView: View {
         VStack(spacing: 17) {
             detailRow("Zone", "\(signal.campus.title) — \(signal.zone)")
             detailRow("Leaving", leavingText)
-            if let hint = store.localBayHint(for: signal.id) {
+            if let hint = store.handover(for: signal)?.parkingHint {
                 detailRow("Hint", hint)
             }
         }
@@ -130,7 +130,7 @@ struct OwnerWaitingView: View {
 
     private func detailRow(_ title: String, _ value: String) -> some View {
         HStack {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(Color.spotTextSecondary)
             Spacer()
             Text(value).fontWeight(.semibold).multilineTextAlignment(.trailing)
         }

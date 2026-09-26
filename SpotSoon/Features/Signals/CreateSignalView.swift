@@ -53,66 +53,59 @@ struct CreateSignalView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 25) {
-                    Capsule()
-                        .fill(.secondary.opacity(0.28))
-                        .frame(width: 44, height: 5)
-                        .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 24)
+                    .padding(.top, 14)
+                    .padding(.bottom, 16)
 
-                    header
-                    departurePicker
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 25) {
+                        departurePicker
 
-                    VehiclePickerView(
-                        title: "Vehicle you’re leaving in",
-                        store: vehicleStore,
-                        selectedVehicleID: $selectedVehicleID
-                    )
-
-                    Text("Only revealed to the claimant during the active handover.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, -16)
-
-                    bayHintField
-                    locationStatus
-
-                    if let error = store.publishError {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
-                    if store.hasOpenSignalOwnedByCurrentUser && !store.isPublishing && !didPublish {
-                        Text("Finish or cancel your current signal before publishing another.")
-                            .font(.caption).foregroundStyle(.red)
-                    }
-
-                    HStack {
-                        Spacer()
-                        Label(
-                            "Expires in \(minutes == 0 ? 5 : minutes + 5) min if unclaimed",
-                            systemImage: "clock"
+                        VehiclePickerView(
+                            title: "Vehicle you’re leaving in",
+                            store: vehicleStore,
+                            selectedVehicleID: $selectedVehicleID
                         )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        Spacer()
-                    }
 
-                    Button {
-                        publish()
-                    } label: {
-                        if store.isPublishing {
-                            ProgressView().tint(.white)
-                        } else {
-                            Label("Publish Signal", systemImage: "dot.radiowaves.left.and.right")
+                        Text("Only revealed to the claimant during the active handover.")
+                            .font(.caption)
+                            .foregroundStyle(Color.spotTextSecondary)
+                            .padding(.top, -16)
+
+                        bayHintField
+                        locationStatus
+
+                        if let error = store.publishError {
+                            Text(error).font(.caption).foregroundStyle(Color.spotError)
+                        }
+                        if store.hasOpenSignalOwnedByCurrentUser && !store.isPublishing && !didPublish {
+                            Text("Finish or cancel your current signal before publishing another.")
+                                .font(.caption).foregroundStyle(Color.spotError)
+                        }
+
+                        HStack {
+                            Spacer()
+                            Label(
+                                "Expires in \(minutes == 0 ? 5 : minutes + 5) min if unclaimed",
+                                systemImage: "clock"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(Color.spotTextSecondary)
+                            Spacer()
                         }
                     }
-                    .buttonStyle(SpotSoonPrimaryButtonStyle())
-                    .disabled(!canPublish)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 10)
-                .padding(.bottom, 26)
+                .scrollDismissesKeyboard(.interactively)
+
+                Divider().overlay(Color.spotBorder)
+                publishFooter
             }
-            .background(.white)
+            .spotScreenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .disabled(store.isPublishing)
             .interactiveDismissDisabled(store.isPublishing)
@@ -141,19 +134,37 @@ struct CreateSignalView: View {
         }
     }
 
+    private var publishFooter: some View {
+        Button {
+            publish()
+        } label: {
+            if store.isPublishing {
+                ProgressView().tint(Color.spotAccentForeground)
+            } else {
+                Label("Publish Signal", systemImage: "dot.radiowaves.left.and.right")
+            }
+        }
+        .buttonStyle(SpotSoonPrimaryButtonStyle())
+        .disabled(!canPublish)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(Color.spotBackground)
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Publish Signal")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.spotInk)
+                    .foregroundStyle(Color.spotTextPrimary)
                 Spacer()
                 Button("Close", systemImage: "xmark") { dismiss() }
                     .labelStyle(.iconOnly)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                     .frame(width: 42, height: 42)
-                    .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                    .background(Color.spotSurfaceElevated, in: Circle())
             }
 
             if let zone {
@@ -165,11 +176,11 @@ struct CreateSignalView: View {
                     HStack(spacing: 7) {
                         Text("\(zone.campus.title) — \(zone.name)")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.spotInk)
+                            .foregroundStyle(Color.spotTextPrimary)
                         Text("·")
                         Label(verificationLabel, systemImage: "circle.fill")
                             .font(.subheadline)
-                            .foregroundStyle(locationStore.isVerified(for: zone.id) ? .green : .orange)
+                            .foregroundStyle(locationStore.isVerified(for: zone.id) ? Color.spotSuccess : Color.spotWarning)
                     }
                 }
             }
@@ -185,16 +196,16 @@ struct CreateSignalView: View {
         VStack(alignment: .leading, spacing: 11) {
             Text("DEPARTING IN")
                 .font(.caption.bold())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
             HStack(spacing: 9) {
                 ForEach([0, 2, 5, 10], id: \.self) { option in
                     Button(option == 0 ? "Now" : "\(option) min") { minutes = option }
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(minutes == option ? .white : Color.spotInk)
+                        .foregroundStyle(minutes == option ? Color.spotAccentForeground : Color.spotTextPrimary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
                         .background(
-                            minutes == option ? Color.spotPurple : Color(.secondarySystemGroupedBackground),
+                            minutes == option ? Color.spotAccent : Color.spotSurfaceElevated,
                             in: Capsule()
                         )
                 }
@@ -206,21 +217,23 @@ struct CreateSignalView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("BAY OR LANDMARK HINT (OPTIONAL)")
                 .font(.caption.bold())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
             TextField("e.g. Row 3, near shade canopy", text: $bayHint, axis: .vertical)
                 .lineLimit(2...3)
                 .padding(15)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                .background(Color.spotInputBackground, in: RoundedRectangle(cornerRadius: 16))
                 .overlay {
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        .stroke(Color.spotBorder, lineWidth: 1)
                 }
                 .onChange(of: bayHint) { _, value in
-                    if value.count > 100 { bayHint = String(value.prefix(100)) }
+                    if value.count > ParkingHint.maximumLength {
+                        bayHint = String(value.prefix(ParkingHint.maximumLength))
+                    }
                 }
-            Text("Private hint storage will be connected in a later data phase.")
+            Text("Visible only to you and the driver who successfully claims your signal.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
         }
     }
 
@@ -231,28 +244,28 @@ struct CreateSignalView: View {
             case .notRequested:
                 Label("Location verification required", systemImage: "location")
             case .permissionDenied:
-                Label("Location access denied", systemImage: "location.slash.fill").foregroundStyle(.red)
+                Label("Location access denied", systemImage: "location.slash.fill").foregroundStyle(Color.spotError)
                 Button("Open Settings") { locationStore.openSettings() }
             case .restricted:
-                Label("Location access restricted", systemImage: "lock.fill").foregroundStyle(.red)
+                Label("Location access restricted", systemImage: "lock.fill").foregroundStyle(Color.spotError)
             case .locating:
                 ProgressView("Verifying parking area…")
             case let .inaccurate(accuracy):
                 Label("GPS accuracy ±\(Int(accuracy.rounded())) m is too low", systemImage: "scope")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.spotWarning)
             case let .outsideZone(distance, _):
                 Label("Outside selected zone · \(Int(distance.rounded())) m away", systemImage: "mappin.slash")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.spotWarning)
                 if let suggestedZone {
                     Button("Switch to \(suggestedZone.campus.title)") { switchZone(to: suggestedZone.id) }
                 }
             case .verified:
                 Label("Campus location verified", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.spotSuccess)
             case .unavailable:
-                Label("Location unavailable", systemImage: "location.slash").foregroundStyle(.orange)
+                Label("Location unavailable", systemImage: "location.slash").foregroundStyle(Color.spotWarning)
             case let .error(message):
-                Text(message).foregroundStyle(.red)
+                Text(message).foregroundStyle(Color.spotError)
             }
 
             if locationStore.authorizationState == .notRequested {

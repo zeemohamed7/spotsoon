@@ -8,7 +8,7 @@ struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 28) {
                 Label("SpotSoon Campus", systemImage: "circle.fill")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.spotPurple)
+                    .foregroundStyle(Color.spotAccent)
                     .labelStyle(.titleAndIcon)
 
                 SpotSoonLogo()
@@ -16,10 +16,10 @@ struct WelcomeView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Spend less time\nsearching.")
                         .font(.system(size: 40, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.spotInk)
+                        .foregroundStyle(Color.spotTextPrimary)
                     Text("Coordinate live parking handovers with other students across campus.")
                         .font(.body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                 }
 
                 VStack(spacing: 22) {
@@ -46,7 +46,7 @@ struct WelcomeView: View {
 
                     Text("Continue with a private anonymous account. Polytechnic SSO may be added in a later phase.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                 }
@@ -54,19 +54,19 @@ struct WelcomeView: View {
             .padding(.horizontal, 26)
             .padding(.vertical, 28)
         }
-        .background(.white)
+        .spotScreenBackground()
     }
 
     private func benefit(_ title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: "checkmark")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
                 .frame(width: 28, height: 28)
-                .background(Color.spotLavender, in: Circle())
+                .background(Color.spotAccentSoft, in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
-                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                Text(detail).font(.subheadline).foregroundStyle(Color.spotTextSecondary)
             }
         }
     }

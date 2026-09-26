@@ -3,10 +3,11 @@ import SwiftUI
 struct LiveHandoverView: View {
     let store: SignalStore
     let signal: ParkingSignal
-    let showPass: (HandoverDetails) -> Void
+    let close: (() -> Void)?
     let completed: (ParkingSignal) -> Void
 
     @State private var confirmation: ParkingSignal.LifecycleAction?
+    @State private var passPresentation = HandoverPassPresentationState()
 
     private var isOwner: Bool { signal.createdBy == store.userID }
     private var details: HandoverDetails? { store.handover(for: signal) }
@@ -24,6 +25,10 @@ struct LiveHandoverView: View {
 
                     parkingAreaCard
 
+                    if let hint = details?.parkingHint {
+                        parkingHintCard(hint)
+                    }
+
                     if let counterpartVehicle {
                         vehicleCard(counterpartVehicle)
                     } else {
@@ -31,7 +36,7 @@ struct LiveHandoverView: View {
                             ProgressView()
                             Text("Loading private handover details…")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.spotTextSecondary)
                         }
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -39,7 +44,7 @@ struct LiveHandoverView: View {
                     }
 
                     if let details, let pass = details.pass {
-                        compactPass(pass, details: details)
+                        compactPass(pass)
                     }
 
                     actionArea
@@ -52,10 +57,10 @@ struct LiveHandoverView: View {
                     if let error = store.actionErrors[signal.id] {
                         Text(error)
                             .font(.footnote)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.spotError)
                             .padding(13)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 13))
+                            .background(Color.spotError.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
                     }
 
                     Label(
@@ -63,7 +68,7 @@ struct LiveHandoverView: View {
                         systemImage: "shield.fill"
                     )
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
@@ -71,7 +76,7 @@ struct LiveHandoverView: View {
                 .padding(20)
             }
         }
-        .background(Color.spotLavender.opacity(0.28).ignoresSafeArea())
+        .background(Color.spotBackground.ignoresSafeArea())
         .confirmationDialog(
             confirmationTitle,
             isPresented: Binding(
@@ -89,6 +94,26 @@ struct LiveHandoverView: View {
         } message: {
             Text(confirmationMessage)
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { passPresentation.isPresented },
+            set: { isPresented in
+                if !isPresented { passPresentation.close() }
+            }
+        )) {
+            if let details {
+                HandoverPassView(
+                    details: details,
+                    vehicle: counterpartVehicle,
+                    vehicleLabel: isOwner ? "VEHICLE ARRIVING" : "VEHICLE LEAVING",
+                    instructions: isOwner
+                        ? "Use this pass to visually match the arriving driver’s pass and vehicle."
+                        : "Show this pass to the departing driver so they can visually match the colour, symbol, number, and vehicle.",
+                    confirmationTitle: isOwner
+                        ? "I See the Arriving Vehicle"
+                        : "I See the Driver’s Vehicle"
+                )
+            }
+        }
     }
 
     private var header: some View {
@@ -97,14 +122,22 @@ struct LiveHandoverView: View {
             Spacer()
             Text("Live Handover")
                 .font(.headline)
-                .foregroundStyle(Color.spotInk)
+                .foregroundStyle(Color.spotTextPrimary)
             Circle()
-                .fill(.green)
+                .fill(Color.spotSuccess)
                 .frame(width: 8, height: 8)
+            if let close {
+                Button("Close", systemImage: "xmark", action: close)
+                    .labelStyle(.iconOnly)
+                    .font(.headline)
+                    .foregroundStyle(Color.spotTextSecondary)
+                    .frame(width: 40, height: 40)
+                    .background(Color.spotSurfaceElevated, in: Circle())
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .background(.white)
+        .background(Color.spotSurface)
     }
 
     private var statusHeading: some View {
@@ -112,18 +145,18 @@ struct LiveHandoverView: View {
             Text(statusLabel)
                 .font(.caption2.bold())
                 .tracking(0.7)
-                .foregroundStyle(Color.spotPurpleDark)
+                .foregroundStyle(Color.spotAccentStrong)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
-                .background(Color.spotPurple.opacity(0.1), in: Capsule())
+                .background(Color.spotAccentSoft, in: Capsule())
 
             Text(title)
                 .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.spotInk)
+                .foregroundStyle(Color.spotTextPrimary)
 
             Text(subtitle)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
         }
     }
 
@@ -131,27 +164,27 @@ struct LiveHandoverView: View {
         HStack(spacing: 12) {
             Image(systemName: "parkingsign.circle.fill")
                 .font(.title2)
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
                 .frame(width: 46, height: 46)
-                .background(Color.spotLavender, in: RoundedRectangle(cornerRadius: 13))
+                .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 13))
             VStack(alignment: .leading, spacing: 3) {
                 Text("PARKING AREA")
                     .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                 Text(signal.zone)
                     .font(.headline)
-                    .foregroundStyle(Color.spotInk)
+                    .foregroundStyle(Color.spotTextPrimary)
                 Text(signal.campus.title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
             }
             Spacer()
             Text(signal.status.rawValue.capitalized)
                 .font(.caption2.bold())
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.spotSuccess)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(Color.green.opacity(0.1), in: Capsule())
+                .background(Color.spotSuccess.opacity(0.1), in: Capsule())
         }
         .padding(16)
         .handoverCard()
@@ -162,11 +195,11 @@ struct LiveHandoverView: View {
             HStack {
                 Text(isOwner ? "INCOMING VEHICLE" : "DEPARTING VEHICLE")
                     .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                 Spacer()
                 Label("Private", systemImage: "lock.fill")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.spotPurple)
+                    .foregroundStyle(Color.spotAccent)
             }
 
             Divider()
@@ -174,17 +207,17 @@ struct LiveHandoverView: View {
             HStack(spacing: 13) {
                 Image(systemName: "car.side.fill")
                     .font(.title3)
-                    .foregroundStyle(Color.spotPurple)
+                    .foregroundStyle(Color.spotAccent)
                     .frame(width: 44, height: 44)
-                    .background(Color.spotLavender, in: RoundedRectangle(cornerRadius: 12))
+                    .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(vehicle.description)
                         .font(.headline)
-                        .foregroundStyle(Color.spotInk)
+                        .foregroundStyle(Color.spotTextPrimary)
                     if let plate = vehicle.plateSuffix {
                         Text("Plate ending ••• \(plate)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.spotTextSecondary)
                     }
                 }
                 Spacer()
@@ -194,46 +227,67 @@ struct LiveHandoverView: View {
         .handoverCard()
     }
 
-    private func compactPass(_ pass: HandoverDetails.Pass, details: HandoverDetails) -> some View {
-        Button {
-            showPass(details)
-        } label: {
-            VStack(spacing: 12) {
-                HStack {
-                    Label("MUTUAL HANDOVER PASS", systemImage: "checkmark.shield.fill")
-                        .font(.caption2.bold())
-                    Spacer()
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                }
-                Text(pass.title.uppercased())
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .tracking(1)
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-                Text("Tap to show the full windshield pass")
-                    .font(.caption)
-                    .opacity(0.82)
+    private func parkingHintCard(_ hint: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "mappin.and.ellipse")
+                .font(.title3)
+                .foregroundStyle(Color.spotAccent)
+                .frame(width: 42, height: 42)
+                .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("PRIVATE PARKING HINT")
+                    .font(.caption2.bold())
+                    .foregroundStyle(Color.spotTextSecondary)
+                Text(hint)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.spotTextPrimary)
             }
-            .foregroundStyle(.white)
-            .padding(18)
-            .frame(maxWidth: .infinity)
-            .background(passColor(pass.color).gradient, in: RoundedRectangle(cornerRadius: 17))
+            Spacer()
+            Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(Color.spotAccent)
+        }
+        .padding(16)
+        .handoverCard()
+    }
+
+    private func compactPass(_ pass: HandoverDetails.Pass) -> some View {
+        Button {
+            passPresentation.show()
+        } label: {
+            compactPassContent(pass, prompt: "Show Handover Pass")
         }
         .buttonStyle(.plain)
+        .accessibilityHint("Opens the full-screen windshield pass")
+    }
+
+    private func compactPassContent(_ pass: HandoverDetails.Pass, prompt: String) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                Label("MUTUAL HANDOVER PASS", systemImage: "checkmark.shield.fill")
+                    .font(.caption2.bold())
+                Spacer()
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            Text(pass.title.uppercased())
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .tracking(1)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+            Label(prompt, systemImage: "rectangle.portrait.and.arrow.forward")
+                .font(.caption.weight(.semibold))
+                .opacity(0.9)
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .frame(maxWidth: .infinity)
+        .background(passColor(pass.color).gradient, in: RoundedRectangle(cornerRadius: 17))
     }
 
     @ViewBuilder
     private var actionArea: some View {
         switch (signal.status, isOwner) {
         case (.claimed, true):
-            if let details {
-                Button {
-                    showPass(details)
-                } label: {
-                    Label("I See the Incoming Vehicle", systemImage: "eye.fill")
-                }
-                .buttonStyle(SpotSoonPrimaryButtonStyle())
-            }
             waitingMessage("Waiting for the claimant to arrive")
             secondaryAction("Cancel Signal", role: .destructive, action: .cancel)
 
@@ -289,10 +343,10 @@ struct LiveHandoverView: View {
             ProgressView().controlSize(.small)
             Text(text).font(.subheadline.weight(.medium))
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.spotTextSecondary)
         .padding(15)
         .frame(maxWidth: .infinity)
-        .background(Color.spotLavender.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.spotSurfaceElevated, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var statusLabel: String {
@@ -309,8 +363,8 @@ struct LiveHandoverView: View {
 
     private var title: String {
         switch (signal.status, isOwner) {
-        case (.claimed, true): "Driver is on the way"
-        case (.claimed, false): "Find the departing driver"
+        case (.claimed, true): "Someone is heading there"
+        case (.claimed, false): "You’re heading there"
         case (.arrived, true): "Handing over the space"
         case (.arrived, false): "You’re at the parking area"
         case (.vacated, true): "You’ve left the space"
@@ -402,9 +456,9 @@ struct HandoverCompleteView: View {
                 Button("Close", systemImage: "xmark", action: done)
                     .labelStyle(.iconOnly)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
                     .frame(width: 42, height: 42)
-                    .background(Color.spotLavender, in: Circle())
+                    .background(Color.spotSurfaceElevated, in: Circle())
             }
             .padding(18)
 
@@ -413,36 +467,36 @@ struct HandoverCompleteView: View {
             VStack(spacing: 22) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 38, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.spotAccentForeground)
                     .frame(width: 82, height: 82)
-                    .background(Color.spotPurple.gradient, in: Circle())
-                    .overlay { Circle().stroke(Color.spotPurple.opacity(0.2), lineWidth: 12) }
-                    .shadow(color: Color.green.opacity(0.22), radius: 24)
+                    .background(Color.spotAccent.gradient, in: Circle())
+                    .overlay { Circle().stroke(Color.spotAccent.opacity(0.2), lineWidth: 12) }
+                    .shadow(color: Color.spotSuccess.opacity(0.22), radius: 24)
 
                 VStack(spacing: 8) {
                     Text("Spot Secured!")
                         .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.spotInk)
+                        .foregroundStyle(Color.spotTextPrimary)
                     Text("Handover completed successfully. Park safely and enjoy your day.")
                         .font(.body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                         .multilineTextAlignment(.center)
                 }
 
                 Label("\(signal.zone) · \(signal.campus.title)", systemImage: "parkingsign.circle.fill")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.spotInk)
+                    .foregroundStyle(Color.spotTextPrimary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Color.spotLavender, in: Capsule())
+                    .background(Color.spotAccentSoft, in: Capsule())
 
                 VStack(spacing: 6) {
                     Label("Handover complete", systemImage: "checkmark.shield.fill")
                         .font(.headline)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.spotSuccess)
                     Text("The signal has been removed from the active feed and its private handover details have been cleared.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                         .multilineTextAlignment(.center)
                 }
                 .padding(18)
@@ -457,13 +511,13 @@ struct HandoverCompleteView: View {
                 .buttonStyle(SpotSoonPrimaryButtonStyle())
                 .padding(24)
         }
-        .background(Color.spotLavender.opacity(0.22).ignoresSafeArea())
+        .background(Color.spotBackground.ignoresSafeArea())
     }
 }
 
 private extension View {
     func handoverCard() -> some View {
-        background(.white, in: RoundedRectangle(cornerRadius: 17))
-            .overlay { RoundedRectangle(cornerRadius: 17).stroke(Color.black.opacity(0.06), lineWidth: 1) }
+        background(Color.spotSurface, in: RoundedRectangle(cornerRadius: 17))
+            .overlay { RoundedRectangle(cornerRadius: 17).stroke(Color.spotBorder, lineWidth: 1) }
     }
 }

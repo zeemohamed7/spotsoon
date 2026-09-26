@@ -38,7 +38,7 @@ struct ZoneMapView: View {
                         ? "parkingsign.circle.fill" : "parkingsign.circle",
                     coordinate: zone.coordinate
                 )
-                    .tint(zone.id == zoneStore.selectedZoneID ? .blue : .gray)
+                    .tint(zone.id == zoneStore.selectedZoneID ? Color.spotAccent : Color.spotTextMuted)
                     .tag(zone.id)
             }
             UserAnnotation()
@@ -47,6 +47,8 @@ struct ZoneMapView: View {
             MapCompass()
             MapUserLocationButton()
         }
+        // MapKit follows the system appearance and supplies its native dark map.
+        .mapStyle(.standard(elevation: .flat, emphasis: .muted))
         .overlay(alignment: .bottomTrailing) {
             HStack {
                 Button("Show both campuses", systemImage: "map") {
@@ -93,7 +95,7 @@ struct ZoneMapView: View {
     }
 
     private func circleColor(for zone: ParkingZone) -> Color {
-        zone.id == zoneStore.selectedZoneID ? .blue : .secondary
+        zone.id == zoneStore.selectedZoneID ? .spotAccent : .spotTextMuted
     }
 
     private static func region(for zone: ParkingZone) -> MKCoordinateRegion {

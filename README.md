@@ -16,11 +16,11 @@ Edit the local plist with the project HTTPS `SUPABASE_URL` and `SUPABASE_PUBLISH
 
 1. In Authentication → Sign In / Providers, enable anonymous sign-ins and new sign-ups.
 2. For a fresh project, run [`supabase/parking_signals.sql`](supabase/parking_signals.sql) once in the SQL Editor.
-3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql), [`202609250002_add_gps_verified_parking_zone.sql`](supabase/migrations/202609250002_add_gps_verified_parking_zone.sql), [`202609250003_add_campus_b_parking_zone.sql`](supabase/migrations/202609250003_add_campus_b_parking_zone.sql), [`202609250004_enforce_one_open_signal_per_creator.sql`](supabase/migrations/202609250004_enforce_one_open_signal_per_creator.sql), then [`202609250005_repair_zone_and_expiry_api_access.sql`](supabase/migrations/202609250005_repair_zone_and_expiry_api_access.sql). Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
+3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql), [`202609250002_add_gps_verified_parking_zone.sql`](supabase/migrations/202609250002_add_gps_verified_parking_zone.sql), [`202609250003_add_campus_b_parking_zone.sql`](supabase/migrations/202609250003_add_campus_b_parking_zone.sql), [`202609250004_enforce_one_open_signal_per_creator.sql`](supabase/migrations/202609250004_enforce_one_open_signal_per_creator.sql), [`202609250005_repair_zone_and_expiry_api_access.sql`](supabase/migrations/202609250005_repair_zone_and_expiry_api_access.sql), then [`202609250006_add_private_parking_hints.sql`](supabase/migrations/202609250006_add_private_parking_hints.sql). Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
 4. In Database → Publications → `supabase_realtime`, confirm that `public.parking_signals` is included exactly once. Confirm that `public.parking_zones`, `public.vehicles`, and `public.parking_signal_handovers` are absent.
 5. In Table Editor or SQL policies, confirm RLS is enabled on all four tables. `parking_zones` exposes only active rows to authenticated users and has no client write policy. `vehicles` must have owner-only SELECT/INSERT/UPDATE/DELETE policies. `parking_signal_handovers` must have only its participant SELECT policy and no client write policy.
 
-The app can directly read the public signal feed, read active zone definitions, and manage only its own saved vehicle rows. Publishing, claiming, arrival, release, cancellation, vacancy, completion, unavailability, expiration cleanup, and Today’s Vehicle selection use authenticated `SECURITY DEFINER` functions with an empty `search_path`. Publishing validates the submitted coordinate against the selected zone’s trusted database centre and radius, then copies the caller-owned vehicle snapshot in the same transaction. The coordinate is used for that check and is not stored. The public Realtime payload never contains raw coordinates, saved vehicles, snapshots, or the visual pass.
+The app can directly read the public signal feed, read active zone definitions, and manage only its own saved vehicle rows. Publishing, claiming, arrival, release, cancellation, vacancy, completion, unavailability, expiration cleanup, and Today’s Vehicle selection use authenticated `SECURITY DEFINER` functions with an empty `search_path`. Publishing validates the submitted coordinate against the selected zone’s trusted database centre and radius, then copies the caller-owned vehicle snapshot and optional trimmed parking hint in the same transaction. The coordinate is used for that check and is not stored. The private hint is readable only by the creator and current claimant through the existing handover RLS policy. The public Realtime payload never contains raw coordinates, saved vehicles, snapshots, parking hints, or the visual pass.
 
 Phone GPS plus server-side coordinate checks provide practical parking-area verification. They cannot prevent every form of device-level location spoofing.
 
@@ -50,13 +50,13 @@ Keep normal simulator code signing enabled for manual database testing so the an
 Use two distinct simulator devices so each has a different anonymous user.
 
 1. Install and launch the configured build on both simulators. On device A, save **My K5 / Midnight grey / Sedan / Kia / K5 / 404**. On device B, save a different vehicle.
-2. In Simulator A, choose Features → Location → Custom Location and enter latitude **26.164736**, longitude **50.543676**. Open Create leaving signal, allow location, select 10 minutes, verify A’s selected vehicle appears under “Vehicle you’re leaving in,” and publish from **Campus A Student Car Park**.
+2. In Simulator A, choose Features → Location → Custom Location and enter latitude **26.164736**, longitude **50.543676**. Open Create leaving signal, allow location, select 10 minutes, enter a private hint such as **Row 3, near shade canopy**, verify A’s selected vehicle appears under “Vehicle you’re leaving in,” and publish from **Campus A Student Car Park**. Verify A sees the trimmed hint while waiting.
 3. On B, verify the signal arrives through Realtime. Tap Claim, confirm B’s Today’s Vehicle under “Vehicle you’re arriving in,” then confirm the claim.
-4. Verify A sees B’s arriving vehicle and B sees A’s leaving **Midnight grey Kia K5 Sedan · Plate ending 404**. Verify both show the same colour, animal symbol, and two-digit number. B can open the full-screen pass.
+4. Verify A sees B’s arriving vehicle and B sees A’s leaving **Midnight grey Kia K5 Sedan · Plate ending 404**. Verify both see the same private hint, colour, animal symbol, and two-digit number. B can open the full-screen pass.
 5. Edit or delete either saved vehicle in My Garage. Verify the active handover still shows the original snapshot.
 6. On B, confirm “I’m Here.” On A, verify the arrived state, visually compare the pass while safely stopped, then confirm “I’ve Left.”
 7. On B, choose “I Got the Spot.” Verify the row and private data disappear on both devices. Repeat and choose “Spot Wasn’t Available.”
-8. Repeat with Release Claim from claimed and arrived states. Verify the owner snapshot remains, the claimant snapshot/pass disappear, and a new claim creates a newly generated pass and claimant snapshot.
+8. Repeat with Release Claim from claimed and arrived states. Verify the owner snapshot and hint remain for A, the former claimant loses all private access, and the claimant snapshot/pass disappear. A new claim must receive the preserved hint, a newly generated pass, and a new claimant snapshot.
 9. Verify creator cancellation from active, claimed, and arrived states removes the signal on both devices.
 
 ## Simulator location verification
@@ -72,10 +72,10 @@ Use two distinct simulator devices so each has a different anonymous user.
 
 ## Campus B and multi-zone verification
 
-Apply migrations through `202609250005_repair_zone_and_expiry_api_access.sql` manually before this test.
+Apply migrations through `202609250006_add_private_parking_hints.sql` manually before this test.
 
 1. Launch SpotSoon and verify both Campus A and Campus B markers and verification circles appear. Use the segmented parking-area control, either marker, and the overview map button. Verify each interaction changes the selected styling, landmark, map focus, and feed without removing signals from the other zone.
-2. Select Campus B. Confirm the screen shows **Campus B Student Car Park**, **formerly BTI**, and **Beside Building 20**.
+2. Select Campus B. Confirm the screen shows **Campus B Student Car Park** and **Beside Building 20**.
 3. In Simulator → Features → Location → Custom Location, enter latitude **26.158319**, longitude **50.546641**. Open Create leaving signal and verify Campus B becomes **Verified**, then publish. Confirm the created row names Campus B and another simulator receives it through Realtime.
 4. Keep the Campus B coordinate, explicitly select Campus A in the publish form, and retry location. Verify publishing is blocked, the form says **You appear to be near Campus B Student Car Park**, and a **Switch to Campus B** button appears. Tap it and verify a new reading runs before Publish is enabled.
 5. Change the custom location to latitude **26.164736**, longitude **50.543676**. Select Campus B and verify the equivalent suggestion to switch to Campus A. Switch explicitly and publish to confirm the Campus A regression path.
@@ -85,7 +85,7 @@ Apply migrations through `202609250005_repair_zone_and_expiry_api_access.sql` ma
 ## Third-user privacy test
 
 1. Launch a third distinct simulator or erase/install on another simulator to obtain a third anonymous user.
-2. While A and B have a claimed, arrived, or vacated handover, open the feed on C. C may see only “Claimed” or “Handover in progress”; it must show no vehicle description and no pass.
+2. While A and B have a claimed, arrived, or vacated handover, open the feed on C. C may see only “Claimed” or “Handover in progress”; it must show no parking hint, vehicle description, or pass.
 3. In the Supabase SQL Editor, test as authenticated users with JWT claims or use three normal clients: C’s `select * from vehicles` must return only C’s rows, and C’s `select * from parking_signal_handovers` must return no A/B row. A and B must each receive the same authorized snapshot row.
 4. Try `set_current_vehicle`, publish, and claim with a vehicle UUID owned by a different user. Each RPC must fail with `vehicle_unavailable`.
 5. Confirm direct client UPDATE of `parking_signals` lifecycle columns and direct INSERT/UPDATE/DELETE of `parking_signal_handovers` are denied.

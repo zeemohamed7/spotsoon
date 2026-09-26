@@ -51,22 +51,40 @@ struct HandoverPassCard: View {
 struct HandoverPassView: View {
     @Environment(\.dismiss) private var dismiss
     let details: HandoverDetails
+    let vehicle: VehicleSnapshot?
+    let vehicleLabel: String
+    let instructions: String
+    let confirmationTitle: String
+
+    init(
+        details: HandoverDetails,
+        vehicle: VehicleSnapshot?,
+        vehicleLabel: String = "VEHICLE LEAVING",
+        instructions: String = "Show this pass to the departing driver so they can visually match the colour, symbol, number, and vehicle.",
+        confirmationTitle: String = "I See the Driver’s Vehicle"
+    ) {
+        self.details = details
+        self.vehicle = vehicle
+        self.vehicleLabel = vehicleLabel
+        self.instructions = instructions
+        self.confirmationTitle = confirmationTitle
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 Label("LIVE HANDOVER BEACON", systemImage: "circle.fill")
                     .font(.caption.bold())
-                    .foregroundStyle(Color.spotPurpleDark)
+                    .foregroundStyle(Color.spotAccentStrong)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 6)
-                    .background(Color.spotPurple.opacity(0.1), in: Capsule())
+                    .background(Color.spotAccentSoft, in: Capsule())
                 Spacer()
                 Button("Close", systemImage: "xmark") { dismiss() }
                     .labelStyle(.iconOnly)
                     .font(.headline)
                     .frame(width: 44, height: 44)
-                    .background(Color.spotLavender, in: Circle())
+                    .background(Color.spotSurfaceElevated, in: Circle())
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
@@ -74,33 +92,35 @@ struct HandoverPassView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     if let pass = details.pass { HandoverPassCard(pass: pass) }
-                    HStack(spacing: 12) {
-                        Image(systemName: "car.fill")
-                            .foregroundStyle(Color.spotPurple)
-                            .frame(width: 44, height: 44)
-                            .background(.white, in: RoundedRectangle(cornerRadius: 12))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("VEHICLE LEAVING")
-                                .font(.caption2.bold())
-                                .foregroundStyle(.secondary)
-                            Text(details.ownerVehicle.description)
-                                .font(.headline)
-                                .lineLimit(2)
+                    if let vehicle {
+                        HStack(spacing: 12) {
+                            Image(systemName: "car.fill")
+                                .foregroundStyle(Color.spotAccent)
+                                .frame(width: 44, height: 44)
+                                .background(Color.spotSurface, in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(vehicleLabel)
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(Color.spotTextSecondary)
+                                Text(vehicle.description)
+                                    .font(.headline)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
                         }
-                        Spacer()
+                        .padding(16)
+                        .background(Color.spotSurfaceElevated, in: RoundedRectangle(cornerRadius: 18))
                     }
-                    .padding(16)
-                    .background(Color.spotLavender, in: RoundedRectangle(cornerRadius: 18))
-                    Text("Show this pass to the departing driver so they can visually match the colour, symbol, number, and vehicle.")
+                    Text(instructions)
                         .multilineTextAlignment(.center)
                     Label(
                         "Visually verify only when safely stopped. Do not block traffic or confront another driver.",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
 
-                    Button("I See the Driver’s Vehicle", systemImage: "eye.fill") {
+                    Button(confirmationTitle, systemImage: "eye.fill") {
                         dismiss()
                     }
                     .buttonStyle(SpotSoonPrimaryButtonStyle())
@@ -108,6 +128,6 @@ struct HandoverPassView: View {
                 .padding(20)
             }
         }
-        .background(Color.spotLavender.opacity(0.35).ignoresSafeArea())
+        .background(Color.spotBackground.ignoresSafeArea())
     }
 }

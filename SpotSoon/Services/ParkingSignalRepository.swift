@@ -20,6 +20,21 @@ nonisolated struct PublishParkingSignalRequest: Equatable, Sendable {
     let zoneID: String
     let ownerVehicleID: UUID
     let location: LocationReading
+    let parkingHint: String?
+
+    init(
+        signal: ParkingSignal,
+        zoneID: String,
+        ownerVehicleID: UUID,
+        location: LocationReading,
+        parkingHint: String? = nil
+    ) {
+        self.signal = signal
+        self.zoneID = zoneID
+        self.ownerVehicleID = ownerVehicleID
+        self.location = location
+        self.parkingHint = parkingHint
+    }
 }
 
 enum SignalEvent { case changed, connected, disconnected }
@@ -33,6 +48,7 @@ enum ParkingSignalRepositoryError: LocalizedError, Equatable {
     case locationUnavailable
     case locationInaccurate
     case outsideParkingZone
+    case invalidParkingHint
     case databaseSetupRequired
     case invalidSignalResponse
 
@@ -46,8 +62,9 @@ enum ParkingSignalRepositoryError: LocalizedError, Equatable {
         case .locationUnavailable: "A valid current location is unavailable. Try again."
         case .locationInaccurate: "GPS accuracy must improve to 65 metres or better."
         case .outsideParkingZone: "You must be inside the selected student parking area to publish."
+        case .invalidParkingHint: "Enter a parking hint of 120 characters or fewer without control characters."
         case .databaseSetupRequired:
-            "Supabase database update required. Run the pending ordered migrations through 202609250005_repair_zone_and_expiry_api_access.sql, then restart SpotSoon."
+            "Supabase database update required. Run the pending ordered migrations through 202609250006_add_private_parking_hints.sql, then restart SpotSoon."
         case .invalidSignalResponse: "The server returned an invalid parking signal."
         }
     }
@@ -176,6 +193,9 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
         if diagnostic.contains("outside_parking_zone") {
             return .outsideParkingZone
         }
+        if diagnostic.contains("invalid_parking_hint") {
+            return .invalidParkingHint
+        }
         if diagnostic.contains("pgrst202")
             || diagnostic.contains("expire_parking_signals") {
             return .databaseSetupRequired
@@ -230,7 +250,7 @@ final class SupabaseParkingSignalRepository: ParkingSignalRepository {
     }
 }
 
-private struct PublishParameters: Encodable {
+nonisolated struct PublishParameters: Encodable {
     let zoneID: String
     let latitude: Double
     let longitude: Double
@@ -238,6 +258,7 @@ private struct PublishParameters: Encodable {
     let leavingAt: Date
     let expiresAt: Date
     let ownerVehicleID: UUID
+    let parkingHint: String?
 
     init(request: PublishParkingSignalRequest) {
         zoneID = request.zoneID
@@ -247,6 +268,7 @@ private struct PublishParameters: Encodable {
         leavingAt = request.signal.leavingAt
         expiresAt = request.signal.expiresAt
         ownerVehicleID = request.ownerVehicleID
+        parkingHint = request.parkingHint
     }
 
     enum CodingKeys: String, CodingKey {
@@ -257,6 +279,7 @@ private struct PublishParameters: Encodable {
         case leavingAt = "p_leaving_at"
         case expiresAt = "p_expires_at"
         case ownerVehicleID = "p_owner_vehicle_id"
+        case parkingHint = "p_parking_hint"
     }
 }
 

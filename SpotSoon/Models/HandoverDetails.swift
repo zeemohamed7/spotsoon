@@ -29,6 +29,7 @@ nonisolated struct HandoverDetails: Codable, Identifiable, Equatable, Sendable {
     let passColor: PassColor?
     let symbolName: String?
     let confirmationNumber: String?
+    let parkingHint: String?
     let ownerVehicle: VehicleSnapshot
     let claimantVehicle: VehicleSnapshot?
     let createdAt: Date
@@ -45,6 +46,7 @@ nonisolated struct HandoverDetails: Codable, Identifiable, Equatable, Sendable {
         case passColor = "pass_color"
         case symbolName = "symbol_name"
         case confirmationNumber = "confirmation_number"
+        case parkingHint = "parking_hint"
         case ownerNickname = "owner_nickname"
         case ownerColor = "owner_color"
         case ownerVehicleType = "owner_vehicle_type"
@@ -67,12 +69,14 @@ nonisolated struct HandoverDetails: Codable, Identifiable, Equatable, Sendable {
         confirmationNumber: String?,
         ownerVehicle: VehicleSnapshot,
         claimantVehicle: VehicleSnapshot?,
+        parkingHint: String? = nil,
         createdAt: Date
     ) {
         self.signalID = signalID
         self.passColor = passColor
         self.symbolName = symbolName
         self.confirmationNumber = confirmationNumber
+        self.parkingHint = parkingHint
         self.ownerVehicle = ownerVehicle
         self.claimantVehicle = claimantVehicle
         self.createdAt = createdAt
@@ -84,6 +88,7 @@ nonisolated struct HandoverDetails: Codable, Identifiable, Equatable, Sendable {
         passColor = try container.decodeIfPresent(PassColor.self, forKey: .passColor)
         symbolName = try container.decodeIfPresent(String.self, forKey: .symbolName)
         confirmationNumber = try container.decodeIfPresent(String.self, forKey: .confirmationNumber)
+        parkingHint = try container.decodeIfPresent(String.self, forKey: .parkingHint)
         ownerVehicle = VehicleSnapshot(
             nickname: try container.decode(String.self, forKey: .ownerNickname),
             color: try container.decode(String.self, forKey: .ownerColor),
@@ -115,6 +120,7 @@ nonisolated struct HandoverDetails: Codable, Identifiable, Equatable, Sendable {
         try container.encodeIfPresent(passColor, forKey: .passColor)
         try container.encodeIfPresent(symbolName, forKey: .symbolName)
         try container.encodeIfPresent(confirmationNumber, forKey: .confirmationNumber)
+        try container.encodeIfPresent(parkingHint, forKey: .parkingHint)
         try container.encode(ownerVehicle.nickname, forKey: .ownerNickname)
         try container.encode(ownerVehicle.color, forKey: .ownerColor)
         try container.encode(ownerVehicle.vehicleType, forKey: .ownerVehicleType)

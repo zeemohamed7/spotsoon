@@ -32,21 +32,30 @@ struct ContentView: View {
                 }
             } else {
                 NavigationStack {
-                    VStack(spacing: 22) {
-                        SpotSoonLogo()
-                        Text("SpotSoon")
-                            .font(.largeTitle.bold())
-                        if loading { ProgressView("Preparing your private session…") }
-                        if let error {
-                            Text(error).foregroundStyle(.red)
-                            Button("Retry") { Task { await start() } }.disabled(loading)
+                    ZStack {
+                        Color.spotBackground.ignoresSafeArea()
+
+                        VStack(spacing: 22) {
+                            SpotSoonLogo()
+                            Text("SpotSoon")
+                                .font(.largeTitle.bold())
+                                .foregroundStyle(Color.spotTextPrimary)
+                            if loading {
+                                ProgressView("Preparing your private session…")
+                                    .foregroundStyle(Color.spotTextSecondary)
+                                    .tint(Color.spotAccent)
+                            }
+                            if let error {
+                                Text(error).foregroundStyle(Color.spotError)
+                                Button("Retry") { Task { await start() } }.disabled(loading)
+                            }
                         }
+                        .padding()
                     }
-                    .padding()
                 }
             }
         }
-        .tint(Color.spotPurple)
+        .tint(Color.spotAccent)
         .task { if store == nil { await start() } }
     }
 

@@ -26,7 +26,7 @@ struct OnboardingFlowView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .tint(Color.spotPurple)
+        .tint(Color.spotAccent)
     }
 
     private func requestLocation() {

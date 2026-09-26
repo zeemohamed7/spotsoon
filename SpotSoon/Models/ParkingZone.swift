@@ -27,14 +27,7 @@ nonisolated struct ParkingZone: Codable, Identifiable, Equatable, Sendable {
 
     var isSupported: Bool { Self.supportedIDs.contains(id) }
 
-    var alternativeContext: String? {
-        id == Self.campusBStudent.id ? "formerly BTI" : nil
-    }
-
-    var selectionLabel: String {
-        if let alternativeContext { return "\(campus.title) · \(alternativeContext)" }
-        return campus.title
-    }
+    var selectionLabel: String { campus.title }
 
     static let supportedIDs: Set<String> = ["campus_a_student", "campus_b_student"]
 

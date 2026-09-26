@@ -41,15 +41,15 @@ struct VehicleEditorView: View {
                     if let error = store.editorError ?? store.errorMessage {
                         Text(error)
                             .font(.footnote)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.spotError)
                             .padding(13)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 13))
+                            .background(Color.spotError.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
                     }
 
                     Button(action: save) {
                         HStack(spacing: 9) {
-                            if store.isSaving { ProgressView().tint(.white) }
+                            if store.isSaving { ProgressView().tint(Color.spotAccentForeground) }
                             Text(vehicle == nil ? "Save Vehicle" : "Save Changes")
                         }
                     }
@@ -67,7 +67,7 @@ struct VehicleEditorView: View {
                 }
                 .padding(20)
             }
-            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            .spotScreenBackground(grouped: true)
             .navigationTitle(vehicle == nil ? "Add Vehicle" : "Edit Vehicle")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -116,7 +116,7 @@ struct VehicleEditorView: View {
                     .textInputAutocapitalization(.words)
             }
         }
-        .cardStyle()
+        .spotCard(radius: 14)
     }
 
     private var vehicleTypePicker: some View {
@@ -128,10 +128,10 @@ struct VehicleEditorView: View {
                     } label: {
                         Label(type.title, systemImage: vehicleIcon(type))
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(draft.vehicleType == type ? .white : Color.spotInk)
+                            .foregroundStyle(draft.vehicleType == type ? Color.spotAccentForeground : Color.spotTextPrimary)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 10)
-                            .background(draft.vehicleType == type ? Color.spotPurple : Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                            .background(draft.vehicleType == type ? Color.spotAccent : Color.spotSurfaceElevated, in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -152,7 +152,7 @@ struct VehicleEditorView: View {
                             .padding(3)
                             .overlay {
                                 Circle()
-                                    .stroke(draft.color.caseInsensitiveCompare(color) == .orderedSame ? Color.spotPurple : Color.primary.opacity(0.12), lineWidth: draft.color.caseInsensitiveCompare(color) == .orderedSame ? 2 : 1)
+                                    .stroke(draft.color.caseInsensitiveCompare(color) == .orderedSame ? Color.spotAccent : Color.spotBorder, lineWidth: draft.color.caseInsensitiveCompare(color) == .orderedSame ? 2 : 1)
                             }
                     }
                     .buttonStyle(.plain)
@@ -172,7 +172,7 @@ struct VehicleEditorView: View {
             }
         }
         .padding(14)
-        .cardStyle()
+        .spotCard(radius: 14)
     }
 
     private var plateCard: some View {
@@ -182,7 +182,7 @@ struct VehicleEditorView: View {
                     .font(.subheadline.weight(.medium))
                 Spacer()
                 HStack(spacing: 8) {
-                    Text("•••").foregroundStyle(.secondary)
+                    Text("•••").foregroundStyle(Color.spotTextSecondary)
                     TextField("404", text: plateBinding)
                         .frame(width: 48)
                         .multilineTextAlignment(.center)
@@ -191,15 +191,15 @@ struct VehicleEditorView: View {
                 }
                 .font(.subheadline.monospaced())
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+                .background(Color.spotInputBackground, in: RoundedRectangle(cornerRadius: 10))
             }
 
             Text("Never enter a full licence plate. SpotSoon only needs the final three characters for identification.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
         }
         .padding(14)
-        .cardStyle()
+        .spotCard(radius: 14)
     }
 
     private var preferenceCard: some View {
@@ -207,12 +207,12 @@ struct VehicleEditorView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Use as Today’s Vehicle").font(.subheadline.weight(.medium))
                 Text("Automatically selects this car for active signals.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Color.spotTextSecondary)
             }
         }
-        .tint(Color.spotPurple)
+        .tint(Color.spotAccent)
         .padding(14)
-        .cardStyle()
+        .spotCard(radius: 14)
         .disabled(vehicle?.isCurrent == true)
     }
 
@@ -233,7 +233,7 @@ struct VehicleEditorView: View {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .tracking(0.7)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.spotTextSecondary)
                 .padding(.horizontal, 4)
             content()
         }
@@ -243,7 +243,7 @@ struct VehicleEditorView: View {
         HStack {
             Text(title).font(.subheadline)
             Spacer(minLength: 16)
-            content().font(.subheadline).foregroundStyle(Color.spotInk)
+            content().font(.subheadline).foregroundStyle(Color.spotTextPrimary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
@@ -288,18 +288,11 @@ struct VehicleEditorView: View {
         case "white": .white
         case "silver": Color(white: 0.8)
         case "grey", "gray", "midnight grey", "midnight gray": Color(white: 0.4)
-        case "black": Color.spotInk
+        case "black": Color.black
         case "blue": .blue
         case "red": .red
         case "orange": .orange
         default: .secondary
         }
-    }
-}
-
-private extension View {
-    func cardStyle() -> some View {
-        background(.background, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 1) }
     }
 }

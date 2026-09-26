@@ -5,7 +5,6 @@ import Observation
 final class SignalStore {
     private(set) var signals: [ParkingSignal] = []
     private(set) var handoverDetails: [UUID: HandoverDetails] = [:]
-    private(set) var localBayHints: [UUID: String] = [:]
     private(set) var isLoading = false
     private(set) var isPublishing = false
     private(set) var inFlightSignalIDs: Set<UUID> = []
@@ -110,6 +109,13 @@ final class SignalStore {
             publishError = "Choose a valid active parking zone and leaving time."
             return false
         }
+        let parkingHint: String?
+        do {
+            parkingHint = try ParkingHint.normalize(bayHint)
+        } catch {
+            publishError = error.localizedDescription
+            return false
+        }
         isPublishing = true
         publishError = nil
         publishRequiresLocationRefresh = false
@@ -120,13 +126,10 @@ final class SignalStore {
                 signal: signal,
                 zoneID: zone.id,
                 ownerVehicleID: ownerVehicleID,
-                location: location
+                location: location,
+                parkingHint: parkingHint
             ))
             guard published.createdBy == userID else { throw ParkingSignalRepositoryError.invalidSignalResponse }
-            let trimmedHint = bayHint?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let trimmedHint, !trimmedHint.isEmpty {
-                localBayHints[published.id] = String(trimmedHint.prefix(100))
-            }
             apply(published, now: now)
             await refresh()
             return true
@@ -193,9 +196,8 @@ final class SignalStore {
                 throw ParkingSignalRepositoryError.invalidSignalResponse
             }
             apply(updated, now: now)
-            if updated.status.isTerminal {
+            if action == .release || updated.status.isTerminal {
                 handoverDetails[signal.id] = nil
-                localBayHints[signal.id] = nil
             }
             await refresh(now: now)
             return true
@@ -213,10 +215,6 @@ final class SignalStore {
     func handover(for signal: ParkingSignal) -> HandoverDetails? {
         guard signal.createdBy == userID || signal.claimedBy == userID else { return nil }
         return handoverDetails[signal.id]
-    }
-
-    func localBayHint(for signalID: UUID) -> String? {
-        localBayHints[signalID]
     }
 
     func clearActionError(for signalID: UUID) {

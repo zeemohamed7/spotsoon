@@ -140,18 +140,48 @@ private struct SignalLifecyclePreview: View {
     SignalLifecyclePreview()
 }
 
+#Preview("Creator handover — Dark") {
+    SignalLifecyclePreview()
+        .preferredColorScheme(.dark)
+}
+
 #Preview("Full handover pass") {
-    HandoverPassView(details: HandoverDetails(
-        signalID: UUID(),
-        passColor: .blue,
-        symbolName: "bird.fill",
-        confirmationNumber: "08",
-        ownerVehicle: VehicleSnapshot(
-            nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
-            make: "Kia", model: "K5", plateSuffix: "404"
+    let vehicle = VehicleSnapshot(
+        nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
+        make: "Kia", model: "K5", plateSuffix: "404"
+    )
+    HandoverPassView(
+        details: HandoverDetails(
+            signalID: UUID(),
+            passColor: .blue,
+            symbolName: "bird.fill",
+            confirmationNumber: "08",
+            ownerVehicle: vehicle,
+            claimantVehicle: nil,
+            createdAt: .now
         ),
-        claimantVehicle: nil,
-        createdAt: .now
-    ))
+        vehicle: vehicle
+    )
+}
+
+
+#Preview("Full handover pass — Dark") {
+    let vehicle = VehicleSnapshot(
+        nickname: "My K5", color: "Midnight grey", vehicleType: .sedan,
+        make: "Kia", model: "K5", plateSuffix: "404"
+    )
+    HandoverPassView(
+        details: HandoverDetails(
+            signalID: UUID(),
+            passColor: .blue,
+            symbolName: "bird.fill",
+            confirmationNumber: "08",
+            ownerVehicle: vehicle,
+            claimantVehicle: nil,
+            createdAt: .now
+        ),
+        vehicle: vehicle
+    )
+    .preferredColorScheme(.dark)
 }
 #endif

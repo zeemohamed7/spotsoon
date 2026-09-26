@@ -9,9 +9,9 @@ struct SignalListView: View {
     @State private var showingCreate = false
     @State private var retryID = UUID()
     @State private var signalToClaim: ParkingSignal?
-    @State private var handoverPass: HandoverDetails?
-    @State private var pendingHandoverPass: HandoverDetails?
+    @State private var handoverNavigation = HandoverNavigationState()
     @State private var completedSignal: ParkingSignal?
+    @State private var selectedRootTab: SpotSoonRootTab = .map
 
     private var signalCounts: [String: Int] {
         let visible = ParkingSignal.visible(store.signals, at: .now)
@@ -26,11 +26,17 @@ struct SignalListView: View {
         }
     }
 
-    private var liveHandoverSignal: ParkingSignal? {
+    private var ownerHandoverSignal: ParkingSignal? {
         ParkingSignal.visible(store.signals, at: .now).first {
-            ($0.createdBy == store.userID || $0.claimedBy == store.userID)
+            $0.createdBy == store.userID
                 && [.claimed, .arrived, .vacated].contains($0.status)
         }
+    }
+
+    private var claimantHandoverSignal: ParkingSignal? {
+        HandoverNavigationState.restorableClaimantSignal(
+            in: store.signals, userID: store.userID, now: .now
+        )
     }
 
     var body: some View {
@@ -47,13 +53,23 @@ struct SignalListView: View {
                         vehicleStore: vehicleStore,
                         locationStore: locationStore
                     )
-                } else if let liveHandoverSignal {
+                } else if let ownerHandoverSignal {
                     LiveHandoverView(
                         store: store,
-                        signal: liveHandoverSignal,
-                        showPass: { handoverPass = $0 },
+                        signal: ownerHandoverSignal,
+                        close: nil,
                         completed: { completedSignal = $0 }
                     )
+                } else if selectedRootTab == .garage {
+                    GarageView(store: vehicleStore)
+                        .toolbar(.visible, for: .navigationBar)
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            bottomNavigation
+                                .padding(.horizontal, 18)
+                                .padding(.top, 8)
+                                .padding(.bottom, 8)
+                                .background(Color.spotGroupedBackground.opacity(0.96))
+                        }
                 } else {
                     ZStack(alignment: .top) {
                         ZoneMapView(
@@ -66,9 +82,14 @@ struct SignalListView: View {
                         mapHeader
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            signalPanel(at: context.date)
+                        VStack(spacing: 18) {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                signalPanel(at: context.date)
+                                    .padding(.horizontal, 16)
+                            }
+                            bottomNavigation
                         }
+                        .padding(.bottom, 10)
                     }
                 }
             }
@@ -81,26 +102,41 @@ struct SignalListView: View {
                     zoneStore: zoneStore,
                     initialZone: zoneStore.selectedZone ?? .campusAStudent
                 )
-                .presentationDetents([.fraction(0.86)])
-                .presentationDragIndicator(.hidden)
-                .presentationContentInteraction(.scrolls)
-                .presentationBackground(.white)
-                .presentationCornerRadius(30)
+                .presentationDetents([.fraction(0.86), .large])
+                .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.resizes)
+                .presentationBackground(Color.spotBackground)
             }
-            .sheet(item: $signalToClaim, onDismiss: showPendingHandoverPass) { signal in
+            .sheet(item: $signalToClaim, onDismiss: presentClaimedHandover) { signal in
                 ClaimSignalView(
                     store: store,
                     vehicleStore: vehicleStore,
                     signal: signal,
-                    onClaimed: { pendingHandoverPass = $0 }
+                    onClaimed: { handoverNavigation.claimSucceeded(signalID: signal.id) }
                 )
                 .presentationDetents([.fraction(0.74)])
                 .presentationDragIndicator(.hidden)
                 .presentationContentInteraction(.scrolls)
-                .presentationBackground(.white)
+                .presentationBackground(Color.spotBackground)
                 .presentationCornerRadius(30)
             }
-            .fullScreenCover(item: $handoverPass) { HandoverPassView(details: $0) }
+            .fullScreenCover(item: Binding(
+                get: { handoverNavigation.liveRoute },
+                set: { route in
+                    if route == nil { handoverNavigation.closeLiveHandover() }
+                    else { handoverNavigation.liveRoute = route }
+                }
+            )) { route in
+                LiveHandoverDestination(
+                    store: store,
+                    signalID: route.signalID,
+                    closed: { handoverNavigation.closeLiveHandover() },
+                    completed: { signal in
+                        handoverNavigation.closeLiveHandover()
+                        completedSignal = signal
+                    }
+                )
+            }
         }
         .task(id: "\(scenePhase == .active)-\(retryID)") {
             if scenePhase == .active { await store.run() }
@@ -138,14 +174,14 @@ struct SignalListView: View {
 
             if let zone = zoneStore.selectedZone {
                 HStack(spacing: 7) {
-                    Circle().fill(.green).frame(width: 7, height: 7)
+                    Circle().fill(Color.spotSuccess).frame(width: 7, height: 7)
                     Text(zone.name)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text("Live")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.spotSuccess)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -159,19 +195,20 @@ struct SignalListView: View {
     @ViewBuilder
     private func signalPanel(at now: Date) -> some View {
         let visible = ParkingSignal.visible(store.signals, in: zoneStore.selectedZone, at: now)
-        VStack(spacing: 14) {
+        let compactSignals = visible.filter { $0.id != claimantHandoverSignal?.id }
+        VStack(spacing: 16) {
             Capsule()
-                .fill(.secondary.opacity(0.25))
-                .frame(width: 42, height: 5)
+                .fill(Color.spotTextMuted.opacity(0.32))
+                .frame(width: 40, height: 5)
 
             HStack(alignment: .firstTextBaseline) {
                 Text(visible.isEmpty ? "Nearby parking" : "Signals")
                     .font(.title3.bold())
-                    .foregroundStyle(Color.spotInk)
+                    .foregroundStyle(Color.spotTextPrimary)
                 if !visible.isEmpty {
                     Text("\(visible.count) active")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                 }
                 Spacer()
             }
@@ -190,24 +227,29 @@ struct SignalListView: View {
 
             statusMessages
 
-            if visible.isEmpty && !store.isLoading && store.listError == nil {
-                VStack(spacing: 8) {
+            if let claimantHandoverSignal {
+                claimantResumeCard(claimantHandoverSignal)
+            }
+
+            if compactSignals.isEmpty && claimantHandoverSignal == nil
+                && !store.isLoading && store.listError == nil {
+                VStack(spacing: 6) {
                     Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(Color.spotPurple)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(Color.spotAccent)
                         .frame(width: 48, height: 48)
-                        .background(Color.spotLavender, in: Circle())
+                        .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 15))
                     Text("No Active Signals Nearby")
                         .font(.headline)
                     Text("Be the first to share when you’re leaving.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                 }
-                .padding(.vertical, 2)
-            } else if !visible.isEmpty {
+                .padding(.vertical, 4)
+            } else if !compactSignals.isEmpty {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(visible) { signal in
+                        ForEach(compactSignals) { signal in
                             SignalRowView(
                                 store: store,
                                 signal: signal,
@@ -216,7 +258,7 @@ struct SignalListView: View {
                                     store.clearActionError(for: signal.id)
                                     signalToClaim = signal
                                 },
-                                showPass: { handoverPass = $0 }
+                                resume: { handoverNavigation.resume(signalID: signal.id) }
                             )
                         }
                     }
@@ -227,30 +269,17 @@ struct SignalListView: View {
                 }) ? 460 : 280)
             }
 
-            Button {
-                store.publishError = nil
-                showingCreate = true
-            } label: {
-                Label(
-                    store.hasOpenSignalOwnedByCurrentUser ? "Signal Already Shared" : "Share Your Spot",
-                    systemImage: "dot.radiowaves.left.and.right"
-                )
-            }
-            .buttonStyle(SpotSoonPrimaryButtonStyle())
-            .disabled(store.hasOpenSignalOwnedByCurrentUser)
-
-            if store.hasOpenSignalOwnedByCurrentUser {
-                Text("Finish or cancel your current signal before sharing another.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
-        .background(.ultraThickMaterial)
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26))
-        .shadow(color: .black.opacity(0.12), radius: 18, y: -4)
+        .padding(.top, 12)
+        .padding(.bottom, 20)
+        .background(Color.spotSurface.opacity(0.97))
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28)
+                .stroke(Color.spotBorder, lineWidth: 1)
+        }
+        .shadow(color: Color.spotOverlay.opacity(0.2), radius: 22, y: 8)
     }
 
     @ViewBuilder
@@ -258,14 +287,14 @@ struct SignalListView: View {
         if zoneStore.isLoading { ProgressView("Loading parking areas…") }
         if store.isLoading { ProgressView("Loading live signals…") }
         if let error = zoneStore.errorMessage {
-            Text(error).font(.caption).foregroundStyle(.red)
+            Text(error).font(.caption).foregroundStyle(Color.spotError)
         }
         if let error = store.listError {
-            Text(error).font(.caption).foregroundStyle(.red)
+            Text(error).font(.caption).foregroundStyle(Color.spotError)
         }
         if let error = store.connectionError {
             VStack(spacing: 6) {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).font(.caption).foregroundStyle(Color.spotError)
                 Button("Retry live updates") { retryID = UUID() }
                     .font(.caption.weight(.semibold))
             }
@@ -277,9 +306,96 @@ struct SignalListView: View {
         locationStore.invalidateVerification()
     }
 
-    private func showPendingHandoverPass() {
-        guard let pendingHandoverPass else { return }
-        self.pendingHandoverPass = nil
-        handoverPass = pendingHandoverPass
+    private func openPublishSheet() {
+        guard !store.hasOpenSignalOwnedByCurrentUser, claimantHandoverSignal == nil else { return }
+        store.publishError = nil
+        showingCreate = true
+    }
+
+    private var bottomNavigation: some View {
+        SpotSoonBottomNavigationBar(
+            selection: selectedRootTab,
+            canShare: !store.hasOpenSignalOwnedByCurrentUser && claimantHandoverSignal == nil,
+            mapAction: { selectedRootTab = .map },
+            shareAction: openPublishSheet,
+            garageAction: { selectedRootTab = .garage }
+        )
+    }
+
+    private func presentClaimedHandover() {
+        handoverNavigation.claimSheetDismissed()
+    }
+
+    private func claimantResumeCard(_ signal: ParkingSignal) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("You’re heading there")
+                        .font(.headline)
+                        .foregroundStyle(Color.spotTextPrimary)
+                    Text("\(signal.campus.title) — \(signal.zone)")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.spotTextSecondary)
+                }
+                Spacer()
+                Text(signal.status.rawValue.capitalized)
+                    .font(.caption2.bold())
+                    .foregroundStyle(Color.spotAccentStrong)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.spotAccentSoft, in: Capsule())
+            }
+            Button("Resume Handover", systemImage: "arrow.up.forward.app.fill") {
+                handoverNavigation.resume(signalID: signal.id)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.spotAccent)
+        }
+        .padding(15)
+        .background(Color.spotSurface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.spotAccent.opacity(0.28), lineWidth: 1)
+        }
+    }
+}
+
+private struct LiveHandoverDestination: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: SignalStore
+    let signalID: UUID
+    let closed: () -> Void
+    let completed: (ParkingSignal) -> Void
+
+    private var signal: ParkingSignal? {
+        store.signals.first {
+            $0.id == signalID
+                && ($0.createdBy == store.userID || $0.claimedBy == store.userID)
+                && [.claimed, .arrived, .vacated].contains($0.status)
+        }
+    }
+
+    var body: some View {
+        Group {
+            if let signal {
+                LiveHandoverView(
+                    store: store,
+                    signal: signal,
+                    close: close,
+                    completed: completed
+                )
+            } else {
+                ProgressView("Updating handover…")
+                    .task {
+                        closed()
+                        dismiss()
+                    }
+            }
+        }
+    }
+
+    private func close() {
+        closed()
+        dismiss()
     }
 }

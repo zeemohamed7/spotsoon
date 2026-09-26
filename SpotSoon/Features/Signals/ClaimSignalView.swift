@@ -5,7 +5,7 @@ struct ClaimSignalView: View {
     let store: SignalStore
     let vehicleStore: VehicleStore
     let signal: ParkingSignal
-    let onClaimed: (HandoverDetails) -> Void
+    let onClaimed: () -> Void
     @State private var selectedVehicleID: UUID?
     @State private var confirming = false
 
@@ -14,7 +14,7 @@ struct ClaimSignalView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Capsule()
-                        .fill(.secondary.opacity(0.28))
+                        .fill(Color.spotTextMuted.opacity(0.28))
                         .frame(width: 44, height: 5)
                         .frame(maxWidth: .infinity)
 
@@ -23,18 +23,18 @@ struct ClaimSignalView: View {
                             Text("INCOMING ARRIVAL")
                                 .font(.caption.bold())
                                 .tracking(1)
-                                .foregroundStyle(Color.spotPurple)
+                                .foregroundStyle(Color.spotAccent)
                             Text("Claim Spot")
                                 .font(.system(size: 30, weight: .bold, design: .rounded))
-                                .foregroundStyle(Color.spotInk)
+                                .foregroundStyle(Color.spotTextPrimary)
                         }
                         Spacer()
                         Button("Close", systemImage: "xmark") { dismiss() }
                             .labelStyle(.iconOnly)
                             .font(.headline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.spotTextSecondary)
                             .frame(width: 42, height: 42)
-                            .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                            .background(Color.spotSurfaceElevated, in: Circle())
                     }
 
                     signalCard
@@ -50,10 +50,10 @@ struct ClaimSignalView: View {
                         systemImage: "lock.fill"
                     )
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.spotTextSecondary)
 
                     if let error = store.actionErrors[signal.id] {
-                        Text(error).font(.caption).foregroundStyle(.red)
+                        Text(error).font(.caption).foregroundStyle(Color.spotError)
                     }
                     if store.isPerformingAction(on: signal.id) {
                         ProgressView("Claiming signal…")
@@ -69,7 +69,7 @@ struct ClaimSignalView: View {
 
                     Text("The handover window remains active for five minutes after the departure time.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.spotTextSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                 }
@@ -77,7 +77,7 @@ struct ClaimSignalView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 28)
             }
-            .background(.white)
+            .spotScreenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(store.isPerformingAction(on: signal.id))
             .alert("Claim this parking signal?", isPresented: $confirming) {
@@ -85,9 +85,7 @@ struct ClaimSignalView: View {
                 Button("Claim This Spot") {
                     Task {
                         if await store.claim(signal, claimantVehicleID: selectedVehicleID) {
-                            if let details = store.handover(for: signal) {
-                                onClaimed(details)
-                            }
+                            onClaimed()
                             dismiss()
                         }
                     }
@@ -102,25 +100,25 @@ struct ClaimSignalView: View {
         HStack(spacing: 12) {
             Text("P")
                 .font(.headline.bold())
-                .foregroundStyle(Color.spotPurple)
+                .foregroundStyle(Color.spotAccent)
                 .frame(width: 48, height: 48)
-                .background(Color.spotLavender, in: RoundedRectangle(cornerRadius: 13))
+                .background(Color.spotAccentSoft, in: RoundedRectangle(cornerRadius: 13))
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(signal.campus.title) — \(signal.zone)")
                     .font(.headline)
                 HStack(spacing: 6) {
-                    Circle().fill(.green).frame(width: 6, height: 6)
-                    Text(leavingText).foregroundStyle(.green)
+                    Circle().fill(Color.spotSuccess).frame(width: 6, height: 6)
+                    Text(leavingText).foregroundStyle(Color.spotSuccess)
                 }
                 .font(.subheadline.weight(.medium))
             }
             Spacer()
         }
         .padding(16)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.spotSurfaceElevated, in: RoundedRectangle(cornerRadius: 18))
         .overlay {
             RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.black.opacity(0.05), lineWidth: 1)
+                .stroke(Color.spotBorder, lineWidth: 1)
         }
     }
 
