@@ -5,6 +5,7 @@ struct SignalListView: View {
     let vehicleStore: VehicleStore
     let zoneStore: ParkingZoneStore
     let locationStore: LocationStore
+    let notificationService: NotificationService
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingCreate = false
     @State private var retryID = UUID()
@@ -12,6 +13,7 @@ struct SignalListView: View {
     @State private var handoverNavigation = HandoverNavigationState()
     @State private var completedSignal: ParkingSignal?
     @State private var selectedRootTab: SpotSoonRootTab = .map
+    @State private var notificationMessage: String?
 
     private var signalCounts: [String: Int] {
         let visible = ParkingSignal.visible(store.signals, at: .now)
@@ -100,7 +102,8 @@ struct SignalListView: View {
                     vehicleStore: vehicleStore,
                     locationStore: locationStore,
                     zoneStore: zoneStore,
-                    initialZone: zoneStore.selectedZone ?? .campusAStudent
+                    initialZone: zoneStore.selectedZone ?? .campusAStudent,
+                    notificationService: notificationService
                 )
                 .presentationDetents([.fraction(0.86), .large])
                 .presentationDragIndicator(.visible)
@@ -112,7 +115,8 @@ struct SignalListView: View {
                     store: store,
                     vehicleStore: vehicleStore,
                     signal: signal,
-                    onClaimed: { handoverNavigation.claimSucceeded(signalID: signal.id) }
+                    onClaimed: { handoverNavigation.claimSucceeded(signalID: signal.id) },
+                    notificationService: notificationService
                 )
                 .presentationDetents([.fraction(0.74)])
                 .presentationDragIndicator(.hidden)
@@ -139,9 +143,31 @@ struct SignalListView: View {
             }
         }
         .task(id: "\(scenePhase == .active)-\(retryID)") {
-            if scenePhase == .active { await store.run() }
+            if scenePhase == .active {
+                await notificationService.refreshAuthorization()
+                await notificationService.retryTokenSynchronization()
+                await store.run()
+            }
         }
         .task { if zoneStore.zones.isEmpty { await zoneStore.load() } }
+        .task(id: notificationService.pendingRoute?.eventID) {
+            guard let payload = notificationService.consumePendingRoute() else { return }
+            await store.refresh()
+            switch NotificationRouter.decision(for: payload, signals: store.signals, userID: store.userID) {
+            case .liveHandover(let signalID): handoverNavigation.resume(signalID: signalID)
+            case .map(let message):
+                selectedRootTab = .map
+                notificationMessage = message
+            }
+        }
+        .alert("Parking handover", isPresented: Binding(
+            get: { notificationMessage != nil },
+            set: { if !$0 { notificationMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(notificationMessage ?? "")
+        }
     }
 
     private var mapHeader: some View {
@@ -160,7 +186,11 @@ struct SignalListView: View {
                 .background(.regularMaterial, in: Circle())
 
                 NavigationLink {
-                    SettingsView(vehicleStore: vehicleStore, locationStore: locationStore)
+                    SettingsView(
+                        vehicleStore: vehicleStore,
+                        locationStore: locationStore,
+                        notificationService: notificationService
+                    )
                 } label: {
                     Image(systemName: "person.crop.circle")
                         .font(.title3.weight(.semibold))

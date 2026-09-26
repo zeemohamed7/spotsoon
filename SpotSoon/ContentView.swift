@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var loading = false
     @AppStorage("hasCompletedPhaseOneOnboarding") private var hasCompletedOnboarding = false
     @State private var isPreviewingOnboarding = ProcessInfo.processInfo.arguments.contains("--show-onboarding")
+    private let notificationService = NotificationService.shared
 
     private var shouldShowOnboarding: Bool {
         !hasCompletedOnboarding || isPreviewingOnboarding
@@ -27,7 +28,8 @@ struct ContentView: View {
                         store: store,
                         vehicleStore: vehicleStore,
                         zoneStore: zoneStore,
-                        locationStore: locationStore
+                        locationStore: locationStore,
+                        notificationService: notificationService
                     )
                 }
             } else {
@@ -67,6 +69,7 @@ struct ContentView: View {
         do {
             let client = try SupabaseClientProvider.makeClient()
             let userID = try await AuthService(client: client).restoreOrSignIn()
+            await notificationService.configure(repository: SupabasePushNotificationRepository(client: client))
             store = SignalStore(repository: SupabaseParkingSignalRepository(client: client), userID: userID)
             vehicleStore = VehicleStore(repository: SupabaseVehicleRepository(client: client), userID: userID)
             zoneStore = ParkingZoneStore(repository: SupabaseParkingZoneRepository(client: client))

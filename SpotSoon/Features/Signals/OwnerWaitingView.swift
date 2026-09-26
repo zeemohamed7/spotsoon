@@ -85,7 +85,11 @@ struct OwnerWaitingView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.spotTextSecondary)
             NavigationLink {
-                SettingsView(vehicleStore: vehicleStore, locationStore: locationStore)
+                SettingsView(
+                    vehicleStore: vehicleStore,
+                    locationStore: locationStore,
+                    notificationService: .shared
+                )
             } label: {
                 Image(systemName: "person.fill")
                     .foregroundStyle(Color.spotAccentForeground)

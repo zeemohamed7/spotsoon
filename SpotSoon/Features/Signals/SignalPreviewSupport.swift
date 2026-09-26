@@ -126,7 +126,8 @@ private struct SignalLifecyclePreview: View {
             store: store,
             vehicleStore: vehicleStore,
             zoneStore: zoneStore,
-            locationStore: locationStore
+            locationStore: locationStore,
+            notificationService: .shared
         )
     }
 

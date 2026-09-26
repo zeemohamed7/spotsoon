@@ -8,6 +8,7 @@ struct CreateSignalView: View {
     let vehicleStore: VehicleStore
     let locationStore: LocationStore
     let zoneStore: ParkingZoneStore
+    let notificationService: NotificationService
 
     @State private var minutes = 2
     @State private var selectedVehicleID: UUID?
@@ -21,12 +22,14 @@ struct CreateSignalView: View {
         vehicleStore: VehicleStore,
         locationStore: LocationStore,
         zoneStore: ParkingZoneStore,
-        initialZone: ParkingZone
+        initialZone: ParkingZone,
+        notificationService: NotificationService = .shared
     ) {
         self.store = store
         self.vehicleStore = vehicleStore
         self.locationStore = locationStore
         self.zoneStore = zoneStore
+        self.notificationService = notificationService
         _selectedZoneID = State(initialValue: initialZone.id)
     }
 
@@ -69,10 +72,10 @@ struct CreateSignalView: View {
                             selectedVehicleID: $selectedVehicleID
                         )
 
-                        Text("Only revealed to the claimant during the active handover.")
-                            .font(.caption)
-                            .foregroundStyle(Color.spotTextSecondary)
-                            .padding(.top, -16)
+//                        Text("Only revealed to the claimant during the active handover.")
+//                            .font(.caption)
+//                            .foregroundStyle(Color.spotTextSecondary)
+//                            .padding(.top, -16)
 
                         bayHintField
                         locationStatus
@@ -121,6 +124,7 @@ struct CreateSignalView: View {
                 .presentationDetents([.medium])
             }
             .task {
+                await notificationService.requestContextualPermissionIfNeeded()
                 guard let zone else { return }
                 switch locationStore.authorizationState {
                 case .authorized:
@@ -174,7 +178,7 @@ struct CreateSignalView: View {
                     }
                 } label: {
                     HStack(spacing: 7) {
-                        Text("\(zone.campus.title) — \(zone.name)")
+                        Text("\(zone.campus.title)")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(Color.spotTextPrimary)
                         Text("·")
@@ -231,9 +235,9 @@ struct CreateSignalView: View {
                         bayHint = String(value.prefix(ParkingHint.maximumLength))
                     }
                 }
-            Text("Visible only to you and the driver who successfully claims your signal.")
-                .font(.caption)
-                .foregroundStyle(Color.spotTextSecondary)
+//            Text("Visible only to you and the driver who successfully claims your signal.")
+//                .font(.caption)
+//                .foregroundStyle(Color.spotTextSecondary)
         }
     }
 

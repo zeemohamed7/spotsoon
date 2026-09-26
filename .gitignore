@@ -2,3 +2,5 @@ SpotSoon/Supabase.local.plist
 DerivedData/
 *.xcuserstate
 xcuserdata/
+__pycache__/
+*.pyc

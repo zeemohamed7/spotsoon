@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     let vehicleStore: VehicleStore
     let locationStore: LocationStore
+    let notificationService: NotificationService
 
     var body: some View {
         ScrollView {
@@ -42,6 +43,24 @@ struct SettingsView: View {
                                 title: "Location Access",
                                 value: locationStore.authorizationState.title,
                                 showsChevron: locationStore.authorizationState != .restricted
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 46)
+                        Button {
+                            if notificationService.permissionState == .denied {
+                                notificationService.openSystemSettings()
+                            } else if notificationService.permissionState == .notRequested {
+                                Task { await notificationService.requestContextualPermissionIfNeeded() }
+                            }
+                        } label: {
+                            SettingsRow(
+                                icon: "bell.fill",
+                                iconColor: .spotAccent,
+                                title: "Notifications",
+                                subtitle: notificationService.registrationError,
+                                value: notificationService.permissionState.title,
+                                showsChevron: [.denied, .notRequested].contains(notificationService.permissionState)
                             )
                         }
                         .buttonStyle(.plain)
@@ -88,6 +107,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             locationStore.refreshAuthorizationState()
+            await notificationService.refreshAuthorization()
             if vehicleStore.vehicles.isEmpty { await vehicleStore.load() }
         }
     }
