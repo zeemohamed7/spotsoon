@@ -1,102 +1,118 @@
-# SpotSoon parking handover spike
+## SpotSoon
 
-SpotSoon is a native SwiftUI and Supabase app for short-lived campus parking handovers. It uses anonymous authentication, a public Realtime signal feed, a private saved garage, atomic lifecycle RPCs, and participant-only vehicle/pass snapshots. No service-role key or additional dependency is used by the client.
+SpotSoon is a native iOS application that helps Bahrain Polytechnic students coordinate real-time parking handovers. A driver preparing to leave publishes a temporary signal for their campus parking zone. Another student can view and atomically claim it, then both users complete a guided handover.
 
-## Local configuration
+The app verifies that publishing happens within a configured campus parking zone. It shares only the approximate zone publicly. Private details, including vehicle descriptions, the optional parking hint, and the matching visual handover pass, are available only to the signal owner and the successful claimant.
 
-From the repository root:
+The project demonstrates anonymous authentication, atomic database operations, Row Level Security, Realtime synchronization, participant-only data, and temporary foreground location sharing.
 
-```sh
-cp Configuration/Supabase.example.plist SpotSoon/Supabase.local.plist
-```
+## Features
 
-Edit the local plist with the project HTTPS `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`). Obtain both from the Supabase project API settings. Never use the secret or service-role key. The real plist is ignored by Git; the safe example contains placeholders. Missing or placeholder values produce a visible development error.
+- Automatic anonymous Supabase authentication with session restoration.
+- MapKit campus map with GPS-verified parking zones for Campus A and Campus B.
+- Temporary signals with selectable departure times and expiration filtering.
+- Atomic claiming through protected PostgreSQL RPC functions, preventing double claims.
+- Complete arrival, vacancy, completion, unavailability, cancellation, release, and expiration flows.
+- Supabase Realtime signal and lifecycle updates across devices.
+- My Garage, where users can save multiple vehicles and choose a Today’s Vehicle.
+- Stable private owner and claimant vehicle snapshots, including optional plate suffixes.
+- Participant-only parking hints and a matching visual pass, such as `PURPLE FOX · 27`, for safe curbside identification.
+- Full-screen Live Handover screens with role-specific actions for the departing driver and claimant.
+- Optional foreground-only Live Approach sharing with approximate distance bands.
+- Restoration of an authenticated user’s active signal or claimed handover after relaunch.
+- Light and dark appearance support using the device’s system setting.
+- Row Level Security and authenticated RPC-based privacy controls.
+- Push notifications are disabled in this submission; active updates use Realtime while the app is running.
 
-## Manual Supabase setup
+## Technologies
 
-1. In Authentication → Sign In / Providers, enable anonymous sign-ins and new sign-ups.
-2. For a fresh project, run [`supabase/parking_signals.sql`](supabase/parking_signals.sql) once in the SQL Editor.
-3. For the existing SpotSoon project, run migrations in filename order. After the Garage migration, run [`202609250001_repair_current_vehicle_selection.sql`](supabase/migrations/202609250001_repair_current_vehicle_selection.sql), [`202609250002_add_gps_verified_parking_zone.sql`](supabase/migrations/202609250002_add_gps_verified_parking_zone.sql), [`202609250003_add_campus_b_parking_zone.sql`](supabase/migrations/202609250003_add_campus_b_parking_zone.sql), [`202609250004_enforce_one_open_signal_per_creator.sql`](supabase/migrations/202609250004_enforce_one_open_signal_per_creator.sql), [`202609250005_repair_zone_and_expiry_api_access.sql`](supabase/migrations/202609250005_repair_zone_and_expiry_api_access.sql), then [`202609250006_add_private_parking_hints.sql`](supabase/migrations/202609250006_add_private_parking_hints.sql), then [`202609250007_add_push_notifications.sql`](supabase/migrations/202609250007_add_push_notifications.sql). Apply `202609240001_add_garage_and_vehicle_snapshots.sql` when no handover is active because legacy signals have no trustworthy owner-vehicle snapshot; that migration closes those development rows.
-4. In Database → Publications → `supabase_realtime`, confirm that `public.parking_signals` is included exactly once. Confirm that `public.parking_zones`, `public.vehicles`, `public.parking_signal_handovers`, `public.push_device_tokens`, and `public.push_notification_events` are absent.
-5. In Table Editor or SQL policies, confirm RLS is enabled on all four tables. `parking_zones` exposes only active rows to authenticated users and has no client write policy. `vehicles` must have owner-only SELECT/INSERT/UPDATE/DELETE policies. `parking_signal_handovers` must have only its participant SELECT policy and no client write policy.
+- **Swift** for application models, services, concurrency, and business logic.
+- **SwiftUI** for the native iOS interface.
+- **MapKit** for campus maps, parking-zone overlays, and approach visualization.
+- **Core Location** for foreground campus-zone verification and optional approach sharing.
+- **Supabase Auth** for anonymous user sessions.
+- **Supabase and PostgreSQL** for authentication, vehicles, signals, private handovers, and lifecycle rules.
+- **Supabase Realtime** for cross-device signal and lifecycle synchronization.
+- **Row Level Security and SECURITY DEFINER RPCs** for authorization, private participant data, and atomic state transitions.
+- **XCTest** for model, store, repository, validation, lifecycle, privacy, and race-condition coverage.
 
-The app can directly read the public signal feed, read active zone definitions, and manage only its own saved vehicle rows. Publishing, claiming, arrival, release, cancellation, vacancy, completion, unavailability, expiration cleanup, and Today’s Vehicle selection use authenticated `SECURITY DEFINER` functions with an empty `search_path`. Publishing validates the submitted coordinate against the selected zone’s trusted database centre and radius, then copies the caller-owned vehicle snapshot and optional trimmed parking hint in the same transaction. The coordinate is used for that check and is not stored. The private hint is readable only by the creator and current claimant through the existing handover RLS policy. The public Realtime payload never contains raw coordinates, saved vehicles, snapshots, parking hints, or the visual pass.
+## How to Run
 
-Phone GPS plus server-side coordinate checks provide practical parking-area verification. They cannot prevent every form of device-level location spoofing.
+1. Open `SpotSoon.xcodeproj` in Xcode.
+2. Select the `SpotSoon` scheme.
+3. Choose an iPhone Simulator.
+4. Build and run with **Product → Run** or `⌘R`.
+5. Complete onboarding and allow location access while using the app.
+6. Add a vehicle in **Settings → My Garage** and select it as Today’s Vehicle.
+7. Return to the map.
 
+An internet connection is required. The app connects to the already-hosted Supabase project and signs in anonymously, so the evaluator needs no test account, Supabase credentials, or dashboard access. Use separate Simulator devices for multi-user demonstrations; each maintains its own anonymous session.
 
-## Push notification setup
+## Demo 1 — Publish a Signal
 
-After applying `202609250007_add_push_notifications.sql`, enable the Push Notifications capability for the `com.zainab.SpotSoon` App ID and create an APNs signing key in Apple Developer. Deploy `supabase/functions/dispatch-push-notifications` as documented in its README. Configure `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID`, and `PUSH_DISPATCH_SECRET` as Supabase Edge Function secrets; do not add their values to source or the iOS client. Create a trusted Supabase Cron invocation once per minute with the matching `x-push-dispatch-secret` header.
+Set the Simulator to a verified Campus A location:
 
-Confirm RLS is enabled on `push_device_tokens` and `push_notification_events`. Authenticated users can access only their own device rows; the outbox has no client policies or grants. Neither table belongs in `supabase_realtime`. The database trigger queues only participant IDs, signal IDs, generic copy, and lifecycle event names after committed lifecycle transitions. The Edge Function uses the server-only service role to claim outbox events and read recipient tokens.
+- Latitude: `26.164736`
+- Longitude: `50.543676`
 
-The iOS app requests notification permission only when Publish or Claim is opened. Debug builds register sandbox tokens and Release builds register production tokens. Notification taps always refresh the authorized feed before routing; an ended or unauthorized handover returns to the map with generic wording. Push is supplemental and never blocks Realtime or lifecycle RPCs.
+In Simulator, choose **Features → Location → Custom Location**, enter the coordinates, and return to SpotSoon.
 
-## Build and tests
+1. Add and select a vehicle in My Garage.
+2. Open the Map screen and select Campus A.
+3. Tap the raised centre **Share your spot** action.
+4. Choose a departure time.
+5. Enter a private hint such as `Row 3, near shade canopy`.
+6. Wait for the sheet to display **Verified in zone**.
+7. Tap **Publish Signal**.
 
-Open `SpotSoon.xcodeproj`, choose the shared `SpotSoon` scheme and an iOS Simulator, then run Product → Build and Product → Test. CLI equivalent:
+The app creates the public signal and private owner snapshot together. The owner enters the waiting state, and the signal appears for other authenticated users through Realtime. The optional hint is not included in the public signal or its Realtime payload.
 
-```sh
-xcodebuild -project SpotSoon.xcodeproj -scheme SpotSoon \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  -derivedDataPath /tmp/SpotSoonDerivedData build test
-```
+To demonstrate Campus B instead, select Campus B and use:
 
-Keep normal simulator code signing enabled for manual database testing so the anonymous session can persist in Keychain. Unit tests use in-memory repositories and require no credentials.
+- Latitude: `26.158319`
+- Longitude: `50.546641`
 
-## One-device Garage test
+## Demo 2 — Two-User Handover
 
-1. Launch SpotSoon and open the profile button → My Garage. Verify the empty state.
-2. Add a vehicle with nickname **My K5**, colour **Midnight grey**, type **Sedan**, make **Kia**, model **K5**, and plate suffix **404**. Leave “Use as Today’s Vehicle” on. Verify the badge and Settings summary.
-3. Add a second vehicle without selecting it. Choose “Use Today” and verify only that row has the badge.
-4. Edit its nickname or colour, cancel, and verify no saved value changes. Edit again and save; verify the new value appears.
-5. Delete the current vehicle. Verify the most recently updated remaining vehicle becomes Today’s Vehicle. Delete the final vehicle and verify the empty state.
-6. Open Create leaving signal. With an empty garage, verify Publish is blocked and Add Vehicle returns to the publish form with the new vehicle selected.
+1. Launch SpotSoon on two Simulators. Device A is the departing owner and Device B is the claimant.
+2. Complete onboarding on both devices and give each user a different Today’s Vehicle.
+3. On Device A, use the Campus A coordinates from Demo 1 and publish a signal.
+4. On Device B, select Campus A and wait for the signal to appear in Nearby Parking.
+5. Open the signal, confirm the selected arriving vehicle, and tap **Claim This Spot →**.
+6. Confirm both devices show the private hint, opposite vehicle details, and matching pass. Device B shows **You’re heading there**; Device A shows **Someone is heading there**.
+7. On Device B, tap **I’m Here — Waiting at the Parking Area**, then confirm **I’m Here**.
+8. On Device A, visually verify the claimant while safely stopped, tap **I’ve Left — Space Is Vacant**, and confirm **I’ve Left**.
+9. On Device B, tap **I Got the Spot**.
+10. Confirm that the completed signal disappears from the active feed on both devices.
 
-## Two-simulator publish and handover test
+Before vacancy, the claimant can use **Release Claim** and the owner can use **Cancel Signal**. After vacancy, the claimant can choose **Spot Wasn’t Available**. Each action is authorized and atomic.
 
-Use two distinct simulator devices so each has a different anonymous user.
+## Demo 3 — Live Approach Sharing
 
-1. Install and launch the configured build on both simulators. On device A, save **My K5 / Midnight grey / Sedan / Kia / K5 / 404**. On device B, save a different vehicle.
-2. In Simulator A, choose Features → Location → Custom Location and enter latitude **26.164736**, longitude **50.543676**. Open Create leaving signal, allow location, select 10 minutes, enter a private hint such as **Row 3, near shade canopy**, verify A’s selected vehicle appears under “Vehicle you’re leaving in,” and publish from **Campus A Student Car Park**. Verify A sees the trimmed hint while waiting.
-3. On B, verify the signal arrives through Realtime. Tap Claim, confirm B’s Today’s Vehicle under “Vehicle you’re arriving in,” then confirm the claim.
-4. Verify A sees B’s arriving vehicle and B sees A’s leaving **Midnight grey Kia K5 Sedan · Plate ending 404**. Verify both see the same private hint, colour, animal symbol, and two-digit number. B can open the full-screen pass.
-5. Edit or delete either saved vehicle in My Garage. Verify the active handover still shows the original snapshot.
-6. On B, confirm “I’m Here.” On A, verify the arrived state, visually compare the pass while safely stopped, then confirm “I’ve Left.”
-7. On B, choose “I Got the Spot.” Verify the row and private data disappear on both devices. Repeat and choose “Spot Wasn’t Available.”
-8. Repeat with Release Claim from claimed and arrived states. Verify the owner snapshot and hint remain for A, the former claimant loses all private access, and the claimant snapshot/pass disappear. A new claim must receive the preserved hint, a newly generated pass, and a new claimant snapshot.
-9. Verify creator cancellation from active, claimed, and arrived states removes the signal on both devices.
+Start with an active two-user handover. Keep owner Device A at `26.164736, 50.543676`. On claimant Device B, tap **Share Live Approach**. While Live Handover remains open, change B’s custom location to each point below and wait at least five seconds after each change.
 
-## Simulator location verification
+| Claimant latitude | Claimant longitude | Approximate distance | Expected band |
+|---|---:|---:|---|
+| `26.166200` | `50.543676` | 163 m | On the way |
+| `26.165750` | `50.543676` | 113 m | Approaching |
+| `26.165100` | `50.543676` | 41 m | Nearby |
+| `26.164900` | `50.543676` | 18 m | Very close |
 
-1. In Xcode, run SpotSoon on a simulator. Open the simulator’s Features → Location → Custom Location menu and enter latitude **26.164736**, longitude **50.543676**.
-2. Open Create leaving signal. The first attempt presents “Verify the parking area”; tap Allow Location, then allow While Using App in the system prompt. With a valid vehicle and leaving time selected, verify the UI reports **Verified at Campus A Student Car Park** and enables Publish.
-3. Publish and verify Supabase accepts the RPC. A second simulator should receive the new signal through Realtime.
-4. Set the simulator location to latitude **26.167000**, longitude **50.543676**, then retry location. Verify **Outside parking zone** appears with an approximate distance and Publish stays disabled.
-5. To verify the server independently, call `publish_parking_signal` from an authenticated client with that outside coordinate and an owned vehicle UUID. It must fail with `outside_parking_zone`; never use a service-role key for this check.
-6. Reset Location permission in the simulator, choose Don’t Allow, and verify the feed remains usable, publishing is blocked, and Open Settings appears. Turn Location Services off temporarily to verify Location unavailable, then restore it and retry with the inside coordinate.
-7. Poor accuracy is deterministic in `ParkingZoneTests`; Simulator custom locations do not reliably expose an accuracy control. Run the test suite to verify a mocked reading over 65 metres is rejected.
-8. Relaunch with permission granted and the inside custom location. Verify the map, circle, current-location marker, saved vehicle, and publish flow return normally.
+Device A should receive each approximate band through Realtime. Sharing is optional and foreground-only; tap **Pause Live Approach** to stop. It never marks arrival automatically. The claimant must still tap **I’m Here — Waiting at the Parking Area** and confirm **I’m Here**.
 
-## Campus B and multi-zone verification
+## Privacy
 
-Apply migrations through `202609250006_add_private_parking_hints.sql` manually before this test.
+SpotSoon verifies an approximate campus parking area, not an exact bay. Vehicle snapshots, parking hints, and passes are separate from the public signal and are available only to its creator and current claimant. Unrelated users receive generic lifecycle states.
 
-1. Launch SpotSoon and verify both Campus A and Campus B markers and verification circles appear. Use the segmented parking-area control, either marker, and the overview map button. Verify each interaction changes the selected styling, landmark, map focus, and feed without removing signals from the other zone.
-2. Select Campus B. Confirm the screen shows **Campus B Student Car Park** and **Beside Building 20**.
-3. In Simulator → Features → Location → Custom Location, enter latitude **26.158319**, longitude **50.546641**. Open Create leaving signal and verify Campus B becomes **Verified**, then publish. Confirm the created row names Campus B and another simulator receives it through Realtime.
-4. Keep the Campus B coordinate, explicitly select Campus A in the publish form, and retry location. Verify publishing is blocked, the form says **You appear to be near Campus B Student Car Park**, and a **Switch to Campus B** button appears. Tap it and verify a new reading runs before Publish is enabled.
-5. Change the custom location to latitude **26.164736**, longitude **50.543676**. Select Campus B and verify the equivalent suggestion to switch to Campus A. Switch explicitly and publish to confirm the Campus A regression path.
-6. Complete claim, arrival, vacancy, and completion for the Campus B signal between two simulators. Verify both devices keep other-zone signals available when switching the feed and continue protecting handover details from unrelated users.
-7. Inspect the selected Campus B 90-metre circle at a useful zoom. It should cover the student car park beside Building 20 without substantially including faculty-only areas. If it does not, record the observed boundary and obtain approval before changing the seeded centre or radius.
+The Supabase URL and anon/publishable key are public client configuration; RLS and protected RPCs secure the data. Temporary approach locations are participant-only and deleted when the handover ends. No service-role key, database password, or private Apple credential is included.
 
-## Third-user privacy test
+Users should visually verify another vehicle only while safely stopped. SpotSoon must not be used to block traffic, confront another driver, or collect names and full licence plates.
 
-1. Launch a third distinct simulator or erase/install on another simulator to obtain a third anonymous user.
-2. While A and B have a claimed, arrived, or vacated handover, open the feed on C. C may see only “Claimed” or “Handover in progress”; it must show no parking hint, vehicle description, or pass.
-3. In the Supabase SQL Editor, test as authenticated users with JWT claims or use three normal clients: C’s `select * from vehicles` must return only C’s rows, and C’s `select * from parking_signal_handovers` must return no A/B row. A and B must each receive the same authorized snapshot row.
-4. Try `set_current_vehicle`, publish, and claim with a vehicle UUID owned by a different user. Each RPC must fail with `vehicle_unavailable`.
-5. Confirm direct client UPDATE of `parking_signals` lifecycle columns and direct INSERT/UPDATE/DELETE of `parking_signal_handovers` are denied.
+## Known Limitations
 
-The service-role key bypasses RLS by design and therefore must remain outside the app and all client configuration.
+- Authentication is anonymous; institutional Bahrain Polytechnic SSO is not implemented.
+- An internet connection is required.
+- GPS verifies an approximate parking area, not an exact bay, and device-level GPS spoofing cannot be completely prevented.
+- Live Approach distance is approximate, opt-in, and foreground-only.
+- Push notifications are disabled in this submission; live cross-device updates rely on Realtime while the app is open.
+- Turn-by-turn directions, exact bay navigation, background tracking, and institutional SSO are not implemented.

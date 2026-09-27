@@ -8,7 +8,6 @@ struct CreateSignalView: View {
     let vehicleStore: VehicleStore
     let locationStore: LocationStore
     let zoneStore: ParkingZoneStore
-    let notificationService: NotificationService
 
     @State private var minutes = 2
     @State private var selectedVehicleID: UUID?
@@ -22,14 +21,12 @@ struct CreateSignalView: View {
         vehicleStore: VehicleStore,
         locationStore: LocationStore,
         zoneStore: ParkingZoneStore,
-        initialZone: ParkingZone,
-        notificationService: NotificationService = .shared
+        initialZone: ParkingZone
     ) {
         self.store = store
         self.vehicleStore = vehicleStore
         self.locationStore = locationStore
         self.zoneStore = zoneStore
-        self.notificationService = notificationService
         _selectedZoneID = State(initialValue: initialZone.id)
     }
 
@@ -124,7 +121,6 @@ struct CreateSignalView: View {
                 .presentationDetents([.medium])
             }
             .task {
-                await notificationService.requestContextualPermissionIfNeeded()
                 guard let zone else { return }
                 switch locationStore.authorizationState {
                 case .authorized:

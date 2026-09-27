@@ -32,8 +32,8 @@ struct WelcomeView: View {
                         detail: "Publishing is limited to approved student parking areas."
                     )
                     benefit(
-                        "No continuous tracking",
-                        detail: "Location is checked only when you choose to verify a parking area."
+                        "Location on your terms",
+                        detail: "Verify a campus zone, then optionally share an approximate approach during an active handover."
                     )
                 }
 

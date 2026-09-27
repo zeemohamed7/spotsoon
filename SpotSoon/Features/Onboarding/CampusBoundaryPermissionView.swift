@@ -41,8 +41,8 @@ struct CampusBoundaryPermissionView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 detail("Designated campus boundary", "Only verifies presence within an authorized perimeter.", "viewfinder")
-                detail("Zero background tracking", "Location is requested only while you use the app.", "shield")
-                detail("No exact bay pinpointing", "Your precise position is never shared in the signal feed.", "hand.raised")
+                detail("Foreground-only sharing", "After a claim, the incoming driver can optionally share an approximate approach while Live Handover is open.", "shield")
+                detail("No exact bay pinpointing", "GPS verifies a zone, not a bay. Use the private hint, vehicles, and matching pass to identify each other.", "hand.raised")
             }
 
             Spacer()

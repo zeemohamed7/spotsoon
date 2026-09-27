@@ -3,7 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     let vehicleStore: VehicleStore
     let locationStore: LocationStore
-    let notificationService: NotificationService
 
     var body: some View {
         ScrollView {
@@ -47,35 +46,17 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().padding(.leading, 46)
-                        Button {
-                            if notificationService.permissionState == .denied {
-                                notificationService.openSystemSettings()
-                            } else if notificationService.permissionState == .notRequested {
-                                Task { await notificationService.requestContextualPermissionIfNeeded() }
-                            }
-                        } label: {
-                            SettingsRow(
-                                icon: "bell.fill",
-                                iconColor: .spotAccent,
-                                title: "Notifications",
-                                subtitle: notificationService.registrationError,
-                                value: notificationService.permissionState.title,
-                                showsChevron: [.denied, .notRequested].contains(notificationService.permissionState)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        Divider().padding(.leading, 46)
                         SettingsRow(icon: "building.2.fill", iconColor: .spotWarning, title: "Default Campus", value: "Selected on map", showsChevron: false)
                     }
                 }
 
                 section("SAFETY & PRIVACY") {
                     card {
-                        SettingsRow(icon: "lock.fill", iconColor: .spotSuccess, title: "Location & Privacy", subtitle: "Location is used only for zone verification.", showsChevron: false)
+                        SettingsRow(icon: "lock.fill", iconColor: .spotSuccess, title: "Location & Privacy", subtitle: "Zone verification plus optional foreground approach sharing.", showsChevron: false)
                         Divider().padding(.leading, 46)
                         SettingsRow(icon: "shield.lefthalf.filled", iconColor: .spotAccent, title: "Handover Safety", value: "Protected", showsChevron: false)
                     }
-                    Text("Vehicle details and the three-character plate suffix are shared only with the other participant during an active handover.")
+                    Text("Temporary approximate coordinates are participant-protected and cleared when access ends. GPS does not identify an exact bay; use the private hint, vehicles, partial plate suffix, and matching pass.")
                         .font(.caption)
                         .foregroundStyle(Color.spotTextSecondary)
                         .padding(.horizontal, 8)
@@ -107,7 +88,6 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             locationStore.refreshAuthorizationState()
-            await notificationService.refreshAuthorization()
             if vehicleStore.vehicles.isEmpty { await vehicleStore.load() }
         }
     }

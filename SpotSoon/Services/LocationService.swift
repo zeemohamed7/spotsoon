@@ -39,6 +39,14 @@ protocol LocationProviding: AnyObject {
 }
 
 @MainActor
+protocol ApproachLocationProviding: AnyObject {
+    var approachAuthorizationStatus: LocationAuthorizationState { get }
+    func requestApproachAuthorization() async -> LocationAuthorizationState
+    func requestApproachLocation() async throws -> LocationReading
+    func openApproachSettings()
+}
+
+@MainActor
 final class CoreLocationService: NSObject, LocationProviding, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var authorizationContinuation: CheckedContinuation<LocationAuthorizationState, Never>?
@@ -270,4 +278,20 @@ final class LocationStore {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
     }
+}
+
+extension LocationStore: ApproachLocationProviding {
+    var approachAuthorizationStatus: LocationAuthorizationState { provider.authorizationStatus }
+
+    func requestApproachAuthorization() async -> LocationAuthorizationState {
+        let result = await provider.requestWhenInUseAuthorization()
+        refreshAuthorizationState()
+        return result
+    }
+
+    func requestApproachLocation() async throws -> LocationReading {
+        try await provider.requestLocation()
+    }
+
+    func openApproachSettings() { openSettings() }
 }

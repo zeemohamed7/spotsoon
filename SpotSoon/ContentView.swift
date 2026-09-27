@@ -5,11 +5,11 @@ struct ContentView: View {
     @State private var vehicleStore: VehicleStore?
     @State private var zoneStore: ParkingZoneStore?
     @State private var locationStore: LocationStore?
+    @State private var approachRepository: (any ApproachTrackingRepository)?
     @State private var error: String?
     @State private var loading = false
     @AppStorage("hasCompletedPhaseOneOnboarding") private var hasCompletedOnboarding = false
     @State private var isPreviewingOnboarding = ProcessInfo.processInfo.arguments.contains("--show-onboarding")
-    private let notificationService = NotificationService.shared
 
     private var shouldShowOnboarding: Bool {
         !hasCompletedOnboarding || isPreviewingOnboarding
@@ -17,7 +17,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let store, let vehicleStore, let zoneStore, let locationStore {
+            if let store, let vehicleStore, let zoneStore, let locationStore, let approachRepository {
                 if shouldShowOnboarding {
                     OnboardingFlowView(locationStore: locationStore) {
                         hasCompletedOnboarding = true
@@ -29,7 +29,7 @@ struct ContentView: View {
                         vehicleStore: vehicleStore,
                         zoneStore: zoneStore,
                         locationStore: locationStore,
-                        notificationService: notificationService
+                        approachRepository: approachRepository
                     )
                 }
             } else {
@@ -69,11 +69,11 @@ struct ContentView: View {
         do {
             let client = try SupabaseClientProvider.makeClient()
             let userID = try await AuthService(client: client).restoreOrSignIn()
-            await notificationService.configure(repository: SupabasePushNotificationRepository(client: client))
             store = SignalStore(repository: SupabaseParkingSignalRepository(client: client), userID: userID)
             vehicleStore = VehicleStore(repository: SupabaseVehicleRepository(client: client), userID: userID)
             zoneStore = ParkingZoneStore(repository: SupabaseParkingZoneRepository(client: client))
             locationStore = LocationStore(provider: CoreLocationService())
+            approachRepository = SupabaseApproachTrackingRepository(client: client)
         } catch {
             self.error = "Could not start SpotSoon: \(error.localizedDescription)"
         }

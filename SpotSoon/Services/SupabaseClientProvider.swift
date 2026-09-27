@@ -3,7 +3,7 @@ import Supabase
 
 enum SupabaseClientProvider {
     static func makeClient(bundle: Bundle = .main) throws -> SupabaseClient {
-        guard let file = bundle.url(forResource: "Supabase.local", withExtension: "plist"),
+        guard let file = bundle.url(forResource: "Supabase.client", withExtension: "plist"),
               let data = try? Data(contentsOf: file),
               let values = try? PropertyListDecoder().decode([String: String].self, from: data),
               let rawURL = values["SUPABASE_URL"],
@@ -19,7 +19,7 @@ enum SupabaseClientProvider {
     enum ConfigurationError: LocalizedError {
         case missing
         var errorDescription: String? {
-            "Development configuration missing or invalid. Copy Configuration/Supabase.example.plist to SpotSoon/Supabase.local.plist, set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (sb_publishable_…), then rebuild."
+            "The bundled Supabase client configuration is missing or malformed. Restore SpotSoon/Supabase.client.plist and rebuild."
         }
     }
 }

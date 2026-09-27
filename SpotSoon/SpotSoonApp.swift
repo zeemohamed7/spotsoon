@@ -9,8 +9,6 @@ import SwiftUI
 
 @main
 struct SpotSoonApp: App {
-    @UIApplicationDelegateAdaptor(SpotSoonAppDelegate.self) private var appDelegate
-
     var body: some Scene {
         WindowGroup {
             ContentView()

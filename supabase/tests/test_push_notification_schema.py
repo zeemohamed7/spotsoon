@@ -30,8 +30,28 @@ class PushNotificationSchemaTests(unittest.TestCase):
         self.assertNotIn("add table public.push_notification_events", BOOTSTRAP)
 
     def test_bootstrap_contains_the_incremental_schema(self):
-        body = MIGRATION.split("begin;\n", 1)[1].rsplit("\ncommit;", 1)[0].strip()
-        self.assertIn(body, BOOTSTRAP)
+        # Later ordered hardening migrations intentionally tighten the initial
+        # table grants, so compare the durable schema/RPC/trigger contract
+        # rather than requiring the bootstrap to preserve obsolete grants.
+        for definition in (
+            "create table public.push_device_tokens (",
+            "create table public.push_notification_events (",
+            "create function public.register_push_device(",
+            "create function public.deactivate_push_device(",
+            "create function public.claim_push_notification_events(",
+            "create function public.enqueue_parking_signal_notifications()",
+            "create trigger parking_signals_enqueue_notifications",
+        ):
+            self.assertIn(definition, MIGRATION)
+            self.assertIn(definition, BOOTSTRAP)
+        self.assertIn(
+            "grant execute on function public.register_push_device(text, uuid, text) to authenticated",
+            BOOTSTRAP,
+        )
+        self.assertIn(
+            "grant execute on function public.deactivate_push_device(uuid, text) to authenticated",
+            BOOTSTRAP,
+        )
 
 
 if __name__ == "__main__":

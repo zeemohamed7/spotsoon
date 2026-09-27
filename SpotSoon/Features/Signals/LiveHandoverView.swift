@@ -1,8 +1,48 @@
 import SwiftUI
 
-struct LiveHandoverView: View {
+struct LiveHandoverContainer: View {
     let store: SignalStore
     let signal: ParkingSignal
+    let close: (() -> Void)?
+    let completed: (ParkingSignal) -> Void
+    @State private var trackingStore: ApproachTrackingStore
+
+    init(
+        store: SignalStore,
+        signal: ParkingSignal,
+        repository: any ApproachTrackingRepository,
+        locationProvider: any ApproachLocationProviding,
+        close: (() -> Void)?,
+        completed: @escaping (ParkingSignal) -> Void
+    ) {
+        self.store = store
+        self.signal = signal
+        self.close = close
+        self.completed = completed
+        _trackingStore = State(initialValue: ApproachTrackingStore(
+            repository: repository,
+            provider: locationProvider,
+            signalID: signal.id,
+            isClaimant: signal.claimedBy == store.userID
+        ))
+    }
+
+    var body: some View {
+        LiveHandoverView(
+            store: store,
+            signal: signal,
+            trackingStore: trackingStore,
+            close: close,
+            completed: completed
+        )
+    }
+}
+
+struct LiveHandoverView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    let store: SignalStore
+    let signal: ParkingSignal
+    let trackingStore: ApproachTrackingStore
     let close: (() -> Void)?
     let completed: (ParkingSignal) -> Void
 
@@ -24,6 +64,10 @@ struct LiveHandoverView: View {
                     statusHeading
 
                     parkingAreaCard
+
+                    if [.claimed, .arrived].contains(signal.status) {
+                        ApproachMapCard(store: trackingStore)
+                    }
 
                     if let hint = details?.parkingHint {
                         parkingHintCard(hint)
@@ -77,6 +121,17 @@ struct LiveHandoverView: View {
             }
         }
         .background(Color.spotBackground.ignoresSafeArea())
+        .task { await trackingStore.start() }
+        .onDisappear { Task { await trackingStore.stop() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { Task { await trackingStore.stop() } }
+            else { Task { await trackingStore.start() } }
+        }
+        .onChange(of: signal.status) { _, status in
+            if ![.claimed, .arrived].contains(status) {
+                Task { await trackingStore.stop() }
+            }
+        }
         .confirmationDialog(
             confirmationTitle,
             isPresented: Binding(

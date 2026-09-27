@@ -62,6 +62,17 @@ private final class PreviewVehicleRepository: VehicleRepository {
 }
 
 @MainActor
+private final class PreviewApproachRepository: ApproachTrackingRepository {
+    func fetch(signalID: UUID) async throws -> ApproachLocation? { nil }
+    func setSharing(signalID: UUID, enabled: Bool) async throws -> ApproachLocation {
+        throw ApproachTrackingRepositoryError.unavailable
+    }
+    func update(signalID: UUID, reading: LocationReading) async throws -> ApproachLocation {
+        throw ApproachTrackingRepositoryError.unavailable
+    }
+}
+
+@MainActor
 private struct SignalLifecyclePreview: View {
     private let store: SignalStore
     private let vehicleStore: VehicleStore
@@ -127,7 +138,7 @@ private struct SignalLifecyclePreview: View {
             vehicleStore: vehicleStore,
             zoneStore: zoneStore,
             locationStore: locationStore,
-            notificationService: .shared
+            approachRepository: PreviewApproachRepository()
         )
     }
 

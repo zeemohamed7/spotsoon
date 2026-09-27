@@ -87,8 +87,7 @@ struct OwnerWaitingView: View {
             NavigationLink {
                 SettingsView(
                     vehicleStore: vehicleStore,
-                    locationStore: locationStore,
-                    notificationService: .shared
+                    locationStore: locationStore
                 )
             } label: {
                 Image(systemName: "person.fill")

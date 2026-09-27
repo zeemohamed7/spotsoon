@@ -93,11 +93,17 @@ struct SpotSoonLogo: View {
 
     var body: some View {
         HStack(spacing: compact ? 8 : 12) {
-            Image(systemName: "parkingsign.circle.fill")
-                .font(.system(size: compact ? 18 : 28, weight: .semibold))
-                .foregroundStyle(Color.spotAccentForeground)
-                .frame(width: compact ? 34 : 52, height: compact ? 34 : 52)
-                .background(Color.spotAccent.gradient, in: RoundedRectangle(cornerRadius: compact ? 11 : 16))
+            ZStack {
+                RoundedRectangle(cornerRadius: compact ? 11 : 16)
+                    .fill(Color.spotAccent.gradient)
+                Circle()
+                    .fill(Color.spotAccentForeground)
+                    .padding(compact ? 8 : 12)
+                Text("S")
+                    .font(.system(size: compact ? 14 : 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.spotAccent)
+            }
+            .frame(width: compact ? 34 : 52, height: compact ? 34 : 52)
             if compact {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("SPOTSOON")

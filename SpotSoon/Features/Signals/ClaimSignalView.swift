@@ -6,7 +6,6 @@ struct ClaimSignalView: View {
     let vehicleStore: VehicleStore
     let signal: ParkingSignal
     let onClaimed: () -> Void
-    let notificationService: NotificationService
     @State private var selectedVehicleID: UUID?
     @State private var confirming = false
 
@@ -95,7 +94,6 @@ struct ClaimSignalView: View {
                 Text("Head to \(signal.campus.title), \(signal.zone), and use the private handover pass to identify each other.")
             }
         }
-        .task { await notificationService.requestContextualPermissionIfNeeded() }
     }
 
     private var signalCard: some View {

@@ -8,7 +8,7 @@ protocol NotificationCenterClient: Sendable {
     func requestAuthorization() async throws -> Bool
 }
 
-struct SystemNotificationCenterClient: NotificationCenterClient {
+nonisolated struct SystemNotificationCenterClient: NotificationCenterClient {
     func authorizationStatus() async -> UNAuthorizationStatus {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
@@ -20,7 +20,7 @@ struct SystemNotificationCenterClient: NotificationCenterClient {
 
 @MainActor @Observable
 final class NotificationService: NSObject {
-    static let shared = NotificationService()
+    static let shared = NotificationService(centerClient: SystemNotificationCenterClient())
 
     private(set) var permissionState: NotificationPermissionState = .notRequested
     private(set) var registrationError: String?
@@ -34,7 +34,7 @@ final class NotificationService: NSObject {
     private let deviceID: UUID
 
     init(
-        centerClient: any NotificationCenterClient = SystemNotificationCenterClient(),
+        centerClient: any NotificationCenterClient,
         deviceID: UUID? = nil
     ) {
         self.centerClient = centerClient
