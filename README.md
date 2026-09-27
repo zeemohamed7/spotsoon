@@ -1,36 +1,36 @@
 # SpotSoon
 
-SpotSoon is a native iOS application for Bahrain Polytechnic that helps students coordinate campus parking handovers. A departing student publishes a temporary signal for a parking space they are about to leave, including a departure time and optional private bay or landmark hint.
+Finding parking at Bahrain Polytechnic can take time, even while other students are preparing to leave. SpotSoon connects departing drivers with students looking for a space, helping them coordinate a quick and private parking handover.
 
-Another student can claim the signal and coordinate a private handover. GPS verifies that publishing occurs within the selected campus parking area, while participant-only vehicle details, partial plate suffixes, and a matching visual pass help the two drivers identify each other safely.
+A departing student shares a temporary signal with a departure time and an optional bay or landmark hint. Another student can claim it and follow the handover steps. GPS checks that the signal is published from the selected campus parking area. Private vehicle details, partial plate suffixes, and a matching visual pass help the two drivers identify each other safely.
 
 ## Features
 
-- Campus A and Campus B parking maps.
-- GPS-verified parking-signal publishing.
-- Saved Garage with a selectable Today’s Vehicle.
-- Departure-time selection.
-- Private bay or landmark hints.
-- Realtime parking signals across devices.
-- Atomic signal claiming that prevents double claims.
-- Participant-only vehicle details and optional plate suffixes.
-- Matching private windshield handover passes.
-- Arrival, vacancy, completion, release, and cancellation lifecycle.
-- Active-handover restoration after relaunch.
-- Optional foreground Live Approach sharing.
-- System light and dark mode support.
+- Parking maps for Campus A and Campus B.
+- GPS checks before a parking signal can be published.
+- A saved Garage with one vehicle selected as Today’s Vehicle.
+- A choice of departure times.
+- An optional private bay or landmark hint.
+- Parking signals that update across devices in real time.
+- A claim system that prevents two students from claiming the same signal.
+- Private vehicle details and plate suffixes shared only between the two drivers.
+- A matching private windshield pass for both drivers.
+- A complete handover flow from claim to completion, including release and cancellation.
+- Active handovers return after reopening the app.
+- Optional Live Approach sharing that shows when the incoming driver is getting closer.
+- Light and dark mode that follows the device setting.
 
 ## Technologies
 
-- **Swift and SwiftUI:** Native application logic, concurrency, and interface.
-- **MapKit:** Campus maps, zone overlays, and approach visualization.
-- **Core Location:** Foreground parking-area verification and optional approach sharing.
-- **Supabase Swift SDK:** Client access to authentication, data, and Realtime services.
-- **PostgreSQL:** Persistent signals, vehicles, private handovers, and lifecycle state.
-- **Anonymous authentication:** Automatic account creation without a visible login screen.
-- **Row Level Security and protected RPCs:** Participant authorization and atomic operations.
-- **Supabase Realtime:** Cross-device signal and lifecycle synchronization.
-- **XCTest:** Automated validation of models, stores, lifecycle behavior, and privacy rules.
+- **Swift and SwiftUI:** The app’s logic, concurrency, and native interface.
+- **MapKit:** Campus maps, parking zones, and Live Approach visuals.
+- **Core Location:** Parking-area checks and optional foreground location sharing.
+- **Supabase Swift SDK:** Access to authentication, stored data, and live updates.
+- **PostgreSQL:** Storage for signals, vehicles, handovers, and their current state.
+- **Anonymous authentication:** Automatic sign-in without a login screen.
+- **Row Level Security and protected RPCs:** Access control and safe, single-step database actions.
+- **Supabase Realtime:** Signal and handover updates between devices.
+- **XCTest:** Automated checks for app behavior and privacy rules.
 
 ## How to Run
 
@@ -42,7 +42,7 @@ Another student can claim the signal and coordinate a private handover. GPS veri
 6. Add a vehicle in Garage.
 7. Return to the campus map.
 
-Internet access is required. The app uses its bundled public Supabase client configuration and connects to an already-prepared hosted backend. Anonymous sign-in happens automatically. The lecturer does not need Supabase credentials or dashboard access and must not run any SQL. See [SUBMISSION.md](SUBMISSION.md) for additional submission and build notes.
+Internet access is required. The bundled public Supabase configuration connects the app to the prepared hosted backend, and anonymous sign-in happens automatically. The lecturer does not need Supabase credentials or dashboard access and must not run any SQL. See [SUBMISSION.md](SUBMISSION.md) for additional submission and build notes.
 
 ## Demo
 
@@ -74,7 +74,7 @@ The claimant can choose **Release Claim** before the owner leaves, and the owner
 
 ### Live Approach Demo
 
-Physical movement can be simulated by changing Simulator B’s custom location while its Live Handover screen remains open. Simulator A should publish from `26.164736, 50.543676`. After B claims the signal, tap **Share Live Approach**, then change B’s coordinates one at a time and wait at least five seconds after each change.
+To simulate movement, change Simulator B’s custom location while its Live Handover screen remains open. Simulator A should publish from `26.164736, 50.543676`. After B claims the signal, tap **Share Live Approach**, then change B’s coordinates one at a time and wait at least five seconds after each change.
 
 | State | Latitude | Longitude |
 |---|---:|---:|
@@ -83,11 +83,11 @@ Physical movement can be simulated by changing Simulator B’s custom location w
 | Nearby | `26.165100` | `50.543676` |
 | Very close | `26.164900` | `50.543676` |
 
-Sharing is optional and works only while the handover screen is active. Displayed distance is approximate, and the claimant can stop sharing with **Pause Live Approach**. Live Approach never marks the claimant as arrived automatically; the claimant must still tap **I’m Here — Waiting at the Parking Area** and confirm **I’m Here**.
+Sharing is optional and works only while the handover screen is active. The distance is approximate, and the claimant can stop sharing with **Pause Live Approach**. Live Approach does not mark the claimant as arrived automatically. The claimant must still tap **I’m Here — Waiting at the Parking Area** and confirm **I’m Here**.
 
 ## Privacy
 
-The public Supabase client key is safe to bundle in the application. Row Level Security and protected server functions control data access, and only the current signal owner and claimant receive private handover information. Temporary approach locations are deleted when the handover ends. No service-role key, database password, or private Apple credential is included.
+The public Supabase client key is safe to include in the app. Row Level Security and protected server functions control access to stored data. Only the current signal owner and claimant receive private handover information. Temporary approach locations are deleted when the handover ends. No service-role key, database password, or private Apple credential is included.
 
 ## Limitations
 
